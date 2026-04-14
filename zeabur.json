@@ -1,0 +1,12 @@
+{
+  "build": {
+    "type": "nodejs"
+  },
+  "start": {
+    "command": "node server.js"
+  },
+  "env": {
+    "MODE": "http",
+    "PORT": "8888"
+  }
+}
