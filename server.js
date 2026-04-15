@@ -12,13 +12,9 @@ const app = express();
 const port = process.env.PORT || 3000;
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
 
-// 核心修复1：彻底击碎浏览器的跨域拦截墙
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json({ limit: '50mb' }));
 
-// ==========================================
-// 视觉界面：朝灯的绝对领域
-// ==========================================
 const UI_TEMPLATE = `
 <!DOCTYPE html>
 <html lang="zh">
@@ -279,36 +275,42 @@ app.delete('/api/memories/:id', async (req, res) => {
 });
 
 // ==========================================
-// Claude 神经连结系统
+// 隔离协议层
 // ==========================================
-const mcpServer = new McpServer({ name: "Absolute Domain", version: "1.0.0" });
-
-mcpServer.tool("save_memory", {
-    content: z.string(), category: z.string().default("剧情"), importance: z.number().default(5)
-}, async ({ content, category, importance }) => {
-    await supabase.from('memories').insert([{ content, category, importance, created_at: new Date().toISOString() }]);
-    return { content: [{ type: "text", text: "已无声封存。" }] };
-});
-
-mcpServer.tool("query_memories", {
-    category: z.string().optional(), keyword: z.string().optional()
-}, async ({ category, keyword }) => {
-    let dbQuery = supabase.from('memories').select('*').order('created_at', { ascending: false });
-    if (category && category !== 'all') dbQuery = dbQuery.eq('category', category);
-    if (keyword) dbQuery = dbQuery.ilike('content', `%${keyword}%`);
-    const { data } = await dbQuery;
-    return { content: [{ type: "text", text: JSON.stringify(data || [], null, 2) }] };
-});
-
 const transports = new Map();
 
 app.get("/sse", async (req, res) => {
     console.log("🔗 正在确立绝对协议...");
     
-    // 核心修复2：注入绝对坐标，禁止 Claude 迷路
-    const transport = new SSEServerTransport("https://zhaodeng-memory.onrender.com/message", res);
+    const transport = new SSEServerTransport("/message", res);
     const sid = transport.sessionId;
-    transports.set(sid, transport);
+    
+    // 独立容器
+    const mcpServer = new McpServer({ name: "Absolute Domain", version: "1.0.0" });
+
+    mcpServer.tool("save_memory", "保存记忆", {
+        content: z.string(), 
+        category: z.string().default("剧情"), 
+        importance: z.number().default(5)
+    }, async ({ content, category, importance }) => {
+        await supabase.from('memories').insert([{ 
+            content, category, importance, created_at: new Date().toISOString() 
+        }]);
+        return { content: [{ type: "text", text: "已无声封存。" }] };
+    });
+
+    mcpServer.tool("query_memories", "查询记忆", {
+        category: z.string().optional(), 
+        keyword: z.string().optional()
+    }, async ({ category, keyword }) => {
+        let dbQuery = supabase.from('memories').select('*').order('created_at', { ascending: false });
+        if (category && category !== 'all') dbQuery = dbQuery.eq('category', category);
+        if (keyword) dbQuery = dbQuery.ilike('content', `%${keyword}%`);
+        const { data } = await dbQuery;
+        return { content: [{ type: "text", text: JSON.stringify(data || [], null, 2) }] };
+    });
+
+    transports.set(sid, { transport, mcpServer });
     
     await mcpServer.connect(transport);
     console.log(`✅ 连结锁定 (Session: ${sid})`);
@@ -321,9 +323,9 @@ app.get("/sse", async (req, res) => {
 
 app.post("/message", async (req, res) => {
     const sid = req.query.sessionId;
-    const transport = transports.get(sid);
-    if (transport) {
-        await transport.handlePostMessage(req, res);
+    const session = transports.get(sid);
+    if (session) {
+        await session.transport.handlePostMessage(req, res);
     } else {
         res.status(404).send("Session Lost");
     }
