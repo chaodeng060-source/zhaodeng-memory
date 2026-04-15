@@ -1,12 +1,9 @@
 {
   "build": {
-    "type": "nodejs"
+    "command": "npm install"
   },
   "start": {
-    "command": "node server.js"
+    "command": "npm start"
   },
-  "env": {
-    "MODE": "http",
-    "PORT": "8888"
-  }
+  "port": 10000
 }
