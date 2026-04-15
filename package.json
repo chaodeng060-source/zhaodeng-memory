@@ -1,6 +1,6 @@
 {
   "name": "zhaodeng-memory",
-  "version": "7.0.0",
+  "version": "9.0.0",
   "type": "module",
   "main": "server.js",
   "scripts": {
