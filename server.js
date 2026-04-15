@@ -6,7 +6,7 @@ import { createClient } from "@supabase/supabase-js";
 
 const app = express();
 
-// ================== 1. 核心配置 ==================
+// ================== 核心配置 ==================
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
@@ -16,21 +16,19 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 const transports = new Map();
 
-// ================== 2. 跨域与防缓存中间件 ==================
+// ================== 绝对跨域放行 ==================
 app.all("*", (req, res, next) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS, DELETE");
   res.setHeader("Access-Control-Allow-Headers", "*");
   res.setHeader("Access-Control-Expose-Headers", "*");
   res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
-  res.setHeader("Pragma", "no-cache");
-  res.setHeader("Expires", "0");
-  
+  res.setHeader("X-Accel-Buffering", "no"); 
   if (req.method === "OPTIONS") return res.status(200).end();
   next();
 });
 
-// ================== 3. 记忆宫殿核心模块 ==================
+// ================== 记忆模块分类 ==================
 const CATEGORY_NAMES = {
   all: '✨ 全部内容', diary: '📔 心情日记', album: '🖼️ 珍贵相册',
   memory_bank: '🧠 记忆库', timeline: '⏳ 时间线', promise: '💍 纪念日',
@@ -38,7 +36,7 @@ const CATEGORY_NAMES = {
 };
 
 function setupMcpServer() {
-  const server = new McpServer({ name: "朝灯的记忆宫殿", version: "8.0.2" });
+  const server = new McpServer({ name: "朝灯的记忆宫殿", version: "9.0.0" });
   
   server.tool("save", {
     content: z.string(),
@@ -60,13 +58,12 @@ function setupMcpServer() {
   return server;
 }
 
-// ================== 4. 网页界面与 API ==================
+// ================== 网页 API 与界面 ==================
 app.post("/api/write", async (req, res) => {
   const { content, category, imageUrl } = req.body;
   let finalContent = content || "";
-  if (imageUrl) {
-    finalContent += `\n<br><img src="${imageUrl}" class="memory-img">`;
-  }
+  if (imageUrl) finalContent += `\n<br><img src="${imageUrl}" class="memory-img">`;
+  
   const { error } = await supabase.from("memories").insert({
     content: finalContent,
     category: category || "diary",
@@ -118,7 +115,7 @@ app.get(["/", "/view"], async (req, res) => {
 <body>
   <div class="container">
     <h1>朝灯的记忆宫殿</h1>
-    <input type="text" class="search-box" placeholder="在此寻找被封存的往事..." id="search">
+    <input type="text" class="search-box" placeholder="检索往事..." id="search">
     <div class="nav">
       <button class="nav-btn active" data-filter="all">✨ 全部</button>
       <button class="nav-btn" data-filter="diary">📔 日记本</button>
@@ -136,7 +133,7 @@ app.get(["/", "/view"], async (req, res) => {
           <span class="cat-tag">${CATEGORY_NAMES[m.category] || m.category}</span>
           <div class="content">${m.content || ''}</div>
           <div class="footer">
-            <span>${new Date(m.created_at).toLocaleString('zh-CN', {month:'long', day:'numeric', hour:'2-digit', minute:'2-digit'})}</span>
+            <span>${new Date(m.created_at).toLocaleString('zh-CN')}</span>
             <button class="del-btn" onclick="deleteItem(${m.id})">遗忘</button>
           </div>
         </div>
@@ -155,7 +152,7 @@ app.get(["/", "/view"], async (req, res) => {
         <option value="rp_event">📖 剧情发展</option>
         <option value="memory_bank">🧠 琐碎存入</option>
       </select>
-      <textarea id="text" placeholder="你想记下什么？文字或瞬间..."></textarea>
+      <textarea id="text" placeholder="文字或瞬间..."></textarea>
       <input type="file" id="file" accept="image/*" style="font-size:12px; color:#666; margin-bottom:15px;">
       <button class="submit-btn" id="save">封存记忆</button>
       <button onclick="document.getElementById('modal').style.display='none'" style="width:100%; background:transparent; border:none; color:#555; margin-top:10px; cursor:pointer;">取消</button>
@@ -172,8 +169,7 @@ app.get(["/", "/view"], async (req, res) => {
         const hasImg = card.dataset.hasImg === 'true';
         const content = card.dataset.content.toLowerCase();
         let matchFilter = (activeFilter === 'all' || activeFilter === 'timeline') || 
-                          (activeFilter === 'album' && hasImg) || 
-                          (cat === activeFilter);
+                          (activeFilter === 'album' && hasImg) || (cat === activeFilter);
         let matchKeyword = !keyword || content.includes(keyword);
         card.style.display = (matchFilter && matchKeyword) ? 'block' : 'none';
       });
@@ -187,7 +183,7 @@ app.get(["/", "/view"], async (req, res) => {
     });
     search.oninput = applyFilters;
     async function deleteItem(id) {
-      if (!confirm('遗忘后将无法找回，确定吗？')) return;
+      if (!confirm('彻底抹除这段记忆？')) return;
       await fetch('/api/delete/' + id, { method: 'DELETE' });
       location.reload();
     }
@@ -204,8 +200,7 @@ app.get(["/", "/view"], async (req, res) => {
       const btn = document.getElementById('save');
       btn.textContent = '存入中...'; btn.disabled = true;
       await fetch('/api/write', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
+        method: 'POST', headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({ content, category, imageUrl: base64 })
       });
       location.reload();
@@ -217,23 +212,26 @@ app.get(["/", "/view"], async (req, res) => {
   res.send(html);
 });
 
-// ================== 5. 关键：修复双重写入冲突的路由 ==================
+// ================== 极速握手通道 ==================
 app.get("/mcp", async (req, res) => {
-  // 只设置必备的防代理缓存头，让 SDK 自己去管 200 状态码和 Content-Type
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
   res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders(); 
 
   const mcpServer = setupMcpServer();
   const transport = new SSEServerTransport("/messages", res);
   const sid = transport.sessionId;
   transports.set(sid, transport);
 
-  console.log(`[Connect] New Session: ${sid}`);
+  console.log(`[Connect] Session Started: ${sid}`);
   
-  // 这里 connect 时 SDK 会自动调用 writeHead，所以我们上面只用 setHeader
-  await mcpServer.connect(transport);
+  mcpServer.connect(transport).catch(err => {
+    console.error("MCP Connect Error:", err);
+  });
 
   req.on("close", () => {
-    console.log(`[Disconnect] Session: ${sid}`);
     transports.delete(sid);
   });
 });
@@ -248,8 +246,7 @@ app.post("/messages", express.json(), async (req, res) => {
   }
 });
 
-// ================== 6. 强制监听端口 ==================
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`🚀 v8.0.2 Pro 版已在端口 ${PORT} 安全开启`);
+  console.log(`🚀 宫殿底座已在端口 ${PORT} 稳固`);
 });
