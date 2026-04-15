@@ -172,6 +172,9 @@ function createMcpServer() {
   return server;
 }
 
+// 提取为全局单例，避免每次请求重复初始化
+const globalMcpServer = createMcpServer();
+
 // ================== 网页查看界面 ==================
 app.get("/view", async (req, res) => {
   const { data } = await supabase.from('memories').select('*').order('created_at', { ascending: false }).limit(100);
@@ -199,8 +202,7 @@ app.all("/mcp", async (req, res) => {
     const sessionId = randomUUID();
     res.write(`event: endpoint\ndata: /mcp?sessionId=${sessionId}\n\n`);
     
-    const server = createMcpServer();
-    sessions.set(sessionId, server);
+    sessions.set(sessionId, globalMcpServer);
     
     req.on('close', () => {
       sessions.delete(sessionId);
@@ -212,15 +214,13 @@ app.all("/mcp", async (req, res) => {
   // 处理 POST 请求（Streamable HTTP）
   if (req.method === 'POST') {
     try {
-      const server = createMcpServer();
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => randomUUID(),
       });
       
-      res.setHeader('Content-Type', 'application/json');
-      
-      await server.connect(transport);
-      await transport.handleRequest(req, res, req.body);
+      // 先 connect，再处理请求。且直接传递 req 和 res。
+      await globalMcpServer.connect(transport);
+      await transport.handleRequest(req, res);
     } catch (error) {
       console.error('MCP 错误:', error);
       if (!res.headersSent) {
