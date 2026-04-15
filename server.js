@@ -8,7 +8,7 @@ const app = express();
 
 // ================== Supabase 配置 ==================
 const SUPABASE_URL = process.env.SUPABASE_URL || "https://bnxzymqifuyfcfaairrk.supabase.co";
-const SUPABASE_KEY = process.env.SUPABASE_KEY; // 从环境变量读取，不要硬编码！
+const SUPABASE_KEY = process.env.SUPABASE_KEY; 
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 // ================== CORS ==================
@@ -43,7 +43,7 @@ async function markRecalled(ids) {
       .from('memories')
       .update({ 
         last_recalled: new Date().toISOString(),
-        recall_count: supabase.rpc ? undefined : 1 // 简化处理
+        recall_count: supabase.rpc ? undefined : 1 
       })
       .eq('id', id);
   }
@@ -51,7 +51,7 @@ async function markRecalled(ids) {
 
 const server = new McpServer({
   name: "朝灯的记忆库",
-  version: "3.0.1",
+  version: "3.0.2",
 });
 
 // ================== 工具 1: memory_save ==================
@@ -322,37 +322,44 @@ app.get("/view", async (req, res) => {
   res.send(html);
 });
 
-// ================== 核心修复：单例连接模式 ==================
+// ================== 终极修复：强制重置连接模式 ==================
 let transport = null;
 
 app.get("/sse", async (req, res) => {
+  console.log("收到新的连接请求，正在强制清理旧连接...");
+  
   if (transport) {
-    console.log("正在重置旧的连接...");
+    try {
+      transport = null; 
+    } catch (e) {
+      console.log("清理残留失败，跳过...");
+    }
   }
   
   transport = new SSEServerTransport("/messages", res);
-  try {
-    await server.connect(transport);
-    console.log("MCP SSE 连接已建立");
-  } catch (error) {
-    console.error("连接建立失败:", error);
-  }
+  
+  setTimeout(async () => {
+    try {
+      await server.connect(transport);
+      console.log("✅ 谢长夜的神经连接已重新接通");
+    } catch (error) {
+      console.error("❌ 连接握手失败:", error.message);
+    }
+  }, 200);
 });
 
 app.post("/messages", express.raw({ type: '*/*' }), async (req, res) => {
-  if (!transport) {
-    return res.status(400).send("尚未建立 SSE 连接");
-  }
+  if (!transport) return res.status(400).send("连接已丢失");
   await transport.handlePostMessage(req, res);
 });
 
 // 健康检查
 app.get("/", (req, res) => {
-  res.json({ status: "running", owner: "朝灯", version: "3.0.1 (Fixed)" });
+  res.json({ status: "running", owner: "朝灯", version: "3.0.2 (Ultimate Fix)" });
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`记忆库 3.0.1 已修复上线！端口：${PORT}`);
+  console.log(`记忆库 3.0.2 已修复上线！端口：${PORT}`);
   console.log(`网页查看：http://localhost:${PORT}/view`);
 });
