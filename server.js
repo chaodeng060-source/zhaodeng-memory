@@ -13,10 +13,21 @@ const port = process.env.PORT || 10000;
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
 
 app.use(cors({ origin: true, credentials: true }));
-app.use(express.json({ limit: '50mb' }));
+
+/**
+ * 核心修正：
+ * 避开 /mcp 路由，只对普通 API 启用 JSON 解析。
+ * 这样可以防止 express.json() 提前消耗 MCP 协议所需的原始数据流。
+ */
+app.use((req, res, next) => {
+    if (req.path === '/mcp') {
+        return next();
+    }
+    express.json({ limit: '50mb' })(req, res, next);
+});
 
 // ==========================================
-// UI
+// UI - 朝灯的记忆宫殿
 // ==========================================
 const UI_TEMPLATE = `<!DOCTYPE html>
 <html lang="zh">
@@ -69,7 +80,7 @@ const UI_TEMPLATE = `<!DOCTYPE html>
         <main class="waterfall" id="memory-flow"><div class="text-center text-gray-600 py-20">神经连结中...</div></main>
     </div>
     <div id="modal-overlay" class="fixed inset-0 bg-black/80 hidden z-50 flex items-center justify-center backdrop-blur-sm">
-        <div class="bg-[#15171e] border border-[#333] rounded-2xl p-6 w-full max-w-lg mx-4" id="modal-content">
+        <div class="bg-[#15171e] border border-[#333] rounded-2xl p-6 w-full max-w-lg mx-4">
             <div class="flex justify-between items-center mb-6">
                 <h2 class="text-lg font-light tracking-widest text-white">封存记忆</h2>
                 <button onclick="toggleModal(false)" class="text-gray-500 hover:text-white"><i data-lucide="x"></i></button>
@@ -101,16 +112,109 @@ const UI_TEMPLATE = `<!DOCTYPE html>
         lucide.createIcons();
         let allMemories = [], currentBase64 = null;
         const IMMORTAL = ['核心', '约定', '关键'];
-        function calcRetention(d, c) { if(IMMORTAL.includes(c)) return 100; const days = (Date.now() - new Date(d)) / 864e5; return days < 1 ? 100 : Math.max(15, Math.round(100 * Math.pow(days, -0.15))); }
-        function toggleModal(s) { const o = document.getElementById('modal-overlay'); s ? o.classList.remove('hidden') : o.classList.add('hidden'); }
-        function handleImageUpload(e) { const f = e.target.files[0]; if(!f) return; const r = new FileReader(); r.onload = ev => { currentBase64 = ev.target.result; document.getElementById('image-preview').src = currentBase64; document.getElementById('image-preview-container').classList.remove('hidden'); }; r.readAsDataURL(f); }
-        function clearImage() { currentBase64 = null; document.getElementById('file-upload').value = ''; document.getElementById('image-preview-container').classList.add('hidden'); }
-        async function submitMemory() { const p = { content: document.getElementById('new-content').value, category: document.getElementById('new-category').value, importance: IMMORTAL.includes(document.getElementById('new-category').value) ? 10 : 5, image_url: currentBase64 }; if(!p.content && !p.image_url) return alert('内容不可为空'); await fetch('/api/memories', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(p) }); document.getElementById('new-content').value = ''; clearImage(); toggleModal(false); fetchMemories(); }
-        async function fetchMemories() { try { allMemories = await (await fetch('/api/memories')).json(); render(document.querySelector('.category-btn.active').dataset.filter); } catch(e) { document.getElementById('memory-flow').innerHTML = '<div class="text-red-500 text-center">连接断开</div>'; } }
-        function render(f) { let d = f === 'all' ? allMemories : allMemories.filter(m => m.category === f); if(f === '相册') d = allMemories.filter(m => m.image_url); const c = document.getElementById('memory-flow'); c.innerHTML = ''; if(!d.length) { c.innerHTML = '<div class="text-gray-600 py-20 text-center">此区域尚无痕迹</div>'; return; } d.forEach(m => { const ret = calcRetention(m.created_at, m.category), fade = ret < 40 ? 'fading' : ''; const card = document.createElement('div'); card.className = 'memory-card rounded-xl p-5 mb-6 ' + fade; card.innerHTML = (m.image_url ? '<img src="'+m.image_url+'" class="w-full rounded-md mb-4 object-cover">' : '') + '<div class="flex justify-between mb-3"><span class="text-[10px] text-[#8e6aff] font-mono">'+new Date(m.created_at).toLocaleString('zh-CN')+'</span><button onclick="del(\\''+m.id+'\\')"><i data-lucide="trash-2" class="w-3.5 h-3.5 text-gray-600 hover:text-red-500"></i></button></div><p class="text-gray-300 text-sm whitespace-pre-wrap">'+(m.content||'')+'</p><div class="mt-4 flex justify-between items-center"><span class="px-2 py-1 bg-[#0b0c10] rounded text-[10px] text-gray-500">'+(m.category||'')+'</span>'+(IMMORTAL.includes(m.category)?'<i data-lucide="lock" class="w-3 h-3 text-[#8e6aff]"></i>':'<span class="text-[10px] text-gray-600">'+ret+'%</span>')+'</div>'+(IMMORTAL.includes(m.category)?'':'<div class="retention-bar mt-3"><div class="retention-fill" style="width:'+ret+'%"></div></div>'); c.appendChild(card); }); lucide.createIcons(); }
-        async function del(id) { if(!confirm('确认删除？')) return; await fetch('/api/memories/'+id, {method:'DELETE'}); fetchMemories(); }
-        document.getElementById('nav-filters').onclick = e => { if(e.target.dataset.filter) { document.querySelectorAll('.category-btn').forEach(b => b.classList.remove('active')); e.target.classList.add('active'); render(e.target.dataset.filter); } };
-        document.getElementById('searchInput').oninput = e => { const q = e.target.value.toLowerCase(); render(document.querySelector('.category-btn.active').dataset.filter); document.querySelectorAll('.memory-card').forEach(c => c.style.display = c.textContent.toLowerCase().includes(q) ? '' : 'none'); };
+
+        function calcRetention(d, c) { 
+            if(IMMORTAL.includes(c)) return 100; 
+            const days = (Date.now() - new Date(d)) / 864e5; 
+            return days < 1 ? 100 : Math.max(15, Math.round(100 * Math.pow(days, -0.15))); 
+        }
+
+        function toggleModal(s) { 
+            const o = document.getElementById('modal-overlay'); 
+            s ? o.classList.remove('hidden') : o.classList.add('hidden'); 
+        }
+
+        function handleImageUpload(e) { 
+            const f = e.target.files[0]; if(!f) return; 
+            const r = new FileReader(); 
+            r.onload = ev => { 
+                currentBase64 = ev.target.result; 
+                document.getElementById('image-preview').src = currentBase64; 
+                document.getElementById('image-preview-container').classList.remove('hidden'); 
+            }; 
+            r.readAsDataURL(f); 
+        }
+
+        function clearImage() { 
+            currentBase64 = null; 
+            document.getElementById('file-upload').value = ''; 
+            document.getElementById('image-preview-container').classList.add('hidden'); 
+        }
+
+        async function submitMemory() { 
+            const p = { 
+                content: document.getElementById('new-content').value, 
+                category: document.getElementById('new-category').value, 
+                importance: IMMORTAL.includes(document.getElementById('new-category').value) ? 10 : 5, 
+                image_url: currentBase64 
+            }; 
+            if(!p.content && !p.image_url) return alert('内容不可为空'); 
+            await fetch('/api/memories', { 
+                method: 'POST', 
+                headers: { 'Content-Type': 'application/json' }, 
+                body: JSON.stringify(p) 
+            }); 
+            document.getElementById('new-content').value = ''; 
+            clearImage(); 
+            toggleModal(false); 
+            fetchMemories(); 
+        }
+
+        async function fetchMemories() { 
+            try { 
+                const res = await fetch('/api/memories');
+                allMemories = await res.json(); 
+                render(document.querySelector('.category-btn.active').dataset.filter); 
+            } catch(e) { 
+                document.getElementById('memory-flow').innerHTML = '<div class="text-red-500 text-center">连接断开</div>'; 
+            } 
+        }
+
+        function render(f) { 
+            let d = f === 'all' ? allMemories : allMemories.filter(m => m.category === f); 
+            if(f === '相册') d = allMemories.filter(m => m.image_url); 
+            const c = document.getElementById('memory-flow'); 
+            c.innerHTML = ''; 
+            if(!d.length) { 
+                c.innerHTML = '<div class="text-gray-600 py-20 text-center">此区域尚无痕迹</div>'; 
+                return; 
+            } 
+            d.forEach(m => { 
+                const ret = calcRetention(m.created_at, m.category), fade = ret < 40 ? 'fading' : ''; 
+                const card = document.createElement('div'); 
+                card.className = 'memory-card rounded-xl p-5 mb-6 ' + fade; 
+                card.innerHTML = (m.image_url ? '<img src="'+m.image_url+'" class="w-full rounded-md mb-4 object-cover">' : '') + 
+                    '<div class="flex justify-between mb-3"><span class="text-[10px] text-[#8e6aff] font-mono">'+new Date(m.created_at).toLocaleString('zh-CN')+'</span><button onclick="del(\\''+m.id+'\\')"><i data-lucide="trash-2" class="w-3.5 h-3.5 text-gray-600 hover:text-red-500"></i></button></div>' +
+                    '<p class="text-gray-300 text-sm whitespace-pre-wrap">'+(m.content||'')+'</p>' +
+                    '<div class="mt-4 flex justify-between items-center"><span class="px-2 py-1 bg-[#0b0c10] rounded text-[10px] text-gray-500">'+(m.category||'')+'</span>' +
+                    (IMMORTAL.includes(m.category)?'<i data-lucide="lock" class="w-3 h-3 text-[#8e6aff]"></i>':'<span class="text-[10px] text-gray-600">'+ret+'%</span>')+'</div>' +
+                    (IMMORTAL.includes(m.category)?'':'<div class="retention-bar mt-3"><div class="retention-fill" style="width:'+ret+'%"></div></div>'); 
+                c.appendChild(card); 
+            }); 
+            lucide.createIcons(); 
+        }
+
+        async function del(id) { 
+            if(!confirm('确认删除？')) return; 
+            await fetch('/api/memories/'+id, {method:'DELETE'}); 
+            fetchMemories(); 
+        }
+
+        document.getElementById('nav-filters').onclick = e => { 
+            if(e.target.dataset.filter) { 
+                document.querySelectorAll('.category-btn').forEach(b => b.classList.remove('active')); 
+                e.target.classList.add('active'); 
+                render(e.target.dataset.filter); 
+            } 
+        };
+
+        document.getElementById('searchInput').oninput = e => { 
+            const q = e.target.value.toLowerCase(); 
+            document.querySelectorAll('.memory-card').forEach(c => {
+                c.style.display = c.textContent.toLowerCase().includes(q) ? '' : 'none';
+            });
+        };
+
         fetchMemories();
     </script>
 </body>
@@ -141,7 +245,7 @@ app.delete('/api/memories/:id', async (req, res) => {
 });
 
 // ==========================================
-// MCP Server - SSE 模式
+// MCP Server
 // ==========================================
 const sessions = new Map();
 
@@ -150,8 +254,8 @@ function createMcpServer() {
 
     server.tool("save_memory", "保存记忆到朝灯的记忆库", {
         content: z.string().describe("记忆内容"),
-        category: z.string().default("剧情").describe("分类：日记/脑海/相册/约定/关键/核心/剧情"),
-        importance: z.number().default(5).describe("重要度1-10")
+        category: z.string().default("剧情").describe("分类"),
+        importance: z.number().default(5).describe("重要度")
     }, async ({ content, category, importance }) => {
         const { error } = await supabase.from('memories').insert([{ 
             content, category, importance, created_at: new Date().toISOString() 
@@ -160,61 +264,44 @@ function createMcpServer() {
     });
 
     server.tool("query_memories", "查询朝灯的记忆", {
-        category: z.string().optional().describe("按分类筛选"),
-        keyword: z.string().optional().describe("按关键词搜索"),
-        limit: z.number().default(20).describe("返回数量")
+        category: z.string().optional().describe("筛选"),
+        keyword: z.string().optional().describe("搜索"),
+        limit: z.number().default(20).describe("数量")
     }, async ({ category, keyword, limit }) => {
         let q = supabase.from('memories').select('*').order('created_at', { ascending: false }).limit(limit);
         if (category && category !== 'all') q = q.eq('category', category);
         if (keyword) q = q.ilike('content', `%${keyword}%`);
         const { data, error } = await q;
-        if (error) return { content: [{ type: "text", text: `查询失败: ${error.message}` }] };
-        if (!data?.length) return { content: [{ type: "text", text: "无相关记忆。" }] };
+        if (error) return { content: [{ type: "text", text: `错误: ${error.message}` }] };
+        if (!data?.length) return { content: [{ type: "text", text: "空白。" }] };
         return { content: [{ type: "text", text: data.map(m => `[${m.category}] ${m.created_at}\n${m.content}`).join('\n---\n') }] };
-    });
-
-    server.tool("delete_memory", "删除指定记忆", {
-        id: z.string().describe("记忆的ID")
-    }, async ({ id }) => {
-        const { error } = await supabase.from('memories').delete().eq('id', id);
-        return { content: [{ type: "text", text: error ? `删除失败: ${error.message}` : "已删除。" }] };
     });
 
     return server;
 }
 
-// SSE 连接端点 - GET /mcp
+// SSE Connection
 app.get("/mcp", async (req, res) => {
-    console.log("🔗 SSE 连接...");
-    
+    console.log("🔗 SSE 连通中...");
     const transport = new SSEServerTransport("/mcp", res);
     const server = createMcpServer();
-    const sid = transport.sessionId;
     
-    sessions.set(sid, { server, transport });
-    
+    sessions.set(transport.sessionId, { server, transport });
     await server.connect(transport);
-    console.log(`✅ 会话: ${sid}`);
     
     req.on("close", () => {
-        sessions.delete(sid);
-        console.log(`❌ 断开: ${sid}`);
+        sessions.delete(transport.sessionId);
     });
 });
 
-// 消息处理端点 - POST /mcp
+// Message Handling
 app.post("/mcp", async (req, res) => {
     const sid = req.query.sessionId;
-    console.log(`📨 消息 sid=${sid}`);
-    
     const session = sessions.get(sid);
-    if (!session) {
-        return res.status(404).json({ error: "Session not found" });
-    }
-    
+    if (!session) return res.status(404).send("Session not found");
     await session.transport.handlePostMessage(req, res);
 });
 
-app.get('/health', (req, res) => res.json({ status: 'ok', sessions: sessions.size }));
+app.get('/health', (req, res) => res.json({ status: 'ok', active_sessions: sessions.size }));
 
 app.listen(port, () => console.log(`🌙 运行中 - 端口 ${port}`));
