@@ -278,41 +278,47 @@ app.delete('/api/memories/:id', async (req, res) => {
 });
 
 // ==========================================
-// Claude 神经连结系统 (MCP 官方协议)
+// Claude 神经连结系统 (MCP 独立实例机制)
 // ==========================================
-const mcpServer = new McpServer({ name: "Absolute Domain", version: "1.0.0" });
-
-mcpServer.tool("save_memory", {
-    content: z.string(), category: z.string().default("剧情"), importance: z.number().default(5)
-}, async ({ content, category, importance }) => {
-    await supabase.from('memories').insert([{ content, category, importance, created_at: new Date().toISOString() }]);
-    return { content: [{ type: "text", text: "已无声封存。" }] };
-});
-
-mcpServer.tool("query_memories", {
-    category: z.string().optional(), keyword: z.string().optional()
-}, async ({ category, keyword }) => {
-    let dbQuery = supabase.from('memories').select('*').order('created_at', { ascending: false });
-    if (category && category !== 'all') dbQuery = dbQuery.eq('category', category);
-    if (keyword) dbQuery = dbQuery.ilike('content', `%${keyword}%`);
-    const { data } = await dbQuery;
-    return { content: [{ type: "text", text: JSON.stringify(data || [], null, 2) }] };
-});
-
 const transports = new Map();
 
+function createMcp() {
+    const server = new McpServer({ name: "Absolute Domain", version: "1.0.0" });
+    
+    server.tool("save_memory", {
+        content: z.string(), category: z.string().default("剧情"), importance: z.number().default(5)
+    }, async ({ content, category, importance }) => {
+        await supabase.from('memories').insert([{ content, category, importance, created_at: new Date().toISOString() }]);
+        return { content: [{ type: "text", text: "已无声封存。" }] };
+    });
+
+    server.tool("query_memories", {
+        category: z.string().optional(), keyword: z.string().optional()
+    }, async ({ category, keyword }) => {
+        let dbQuery = supabase.from('memories').select('*').order('created_at', { ascending: false });
+        if (category && category !== 'all') dbQuery = dbQuery.eq('category', category);
+        if (keyword) dbQuery = dbQuery.ilike('content', `%${keyword}%`);
+        const { data } = await dbQuery;
+        return { content: [{ type: "text", text: JSON.stringify(data || [], null, 2) }] };
+    });
+    
+    return server;
+}
+
 app.get("/sse", async (req, res) => {
-    console.log("🔗 Claude 正在尝试突破隔离层...");
+    console.log("🔗 建立新连结通道...");
     const transport = new SSEServerTransport("/message", res);
     const sid = transport.sessionId;
     transports.set(sid, transport);
     
+    const mcpServer = createMcp();
     await mcpServer.connect(transport);
-    console.log(`✅ 神经连结已确立 (Session: ${sid})`);
+    console.log(`✅ 连结确立 (Session: ${sid})`);
 
-    req.on("close", () => {
+    req.on("close", async () => {
         transports.delete(sid);
-        console.log(`❌ 连结已剥离 (Session: ${sid})`);
+        try { await mcpServer.close(); } catch(e) {}
+        console.log(`❌ 连结剥离 (Session: ${sid})`);
     });
 });
 
