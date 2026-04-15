@@ -16,14 +16,13 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 const transports = new Map();
 
-// ================== 绝对跨域放行 ==================
+// ================== 基础跨域与防代理缓存 ==================
 app.all("*", (req, res, next) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS, DELETE");
   res.setHeader("Access-Control-Allow-Headers", "*");
   res.setHeader("Access-Control-Expose-Headers", "*");
-  res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
-  res.setHeader("X-Accel-Buffering", "no"); 
+  res.setHeader("X-Accel-Buffering", "no"); // 仅保留这一条必备指令，防止 Render 阻塞流
   if (req.method === "OPTIONS") return res.status(200).end();
   next();
 });
@@ -36,7 +35,7 @@ const CATEGORY_NAMES = {
 };
 
 function setupMcpServer() {
-  const server = new McpServer({ name: "朝灯的记忆宫殿", version: "9.0.0" });
+  const server = new McpServer({ name: "朝灯的记忆宫殿", version: "9.0.1" });
   
   server.tool("save", {
     content: z.string(),
@@ -212,14 +211,9 @@ app.get(["/", "/view"], async (req, res) => {
   res.send(html);
 });
 
-// ================== 极速握手通道 ==================
+// ================== 标准连接通道 (修复 Headers 冲突) ==================
 app.get("/mcp", async (req, res) => {
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache, no-transform');
-  res.setHeader('Connection', 'keep-alive');
-  res.setHeader('X-Accel-Buffering', 'no');
-  res.flushHeaders(); 
-
+  // 移除所有强制写入响应头的操作，由官方 SDK 接管
   const mcpServer = setupMcpServer();
   const transport = new SSEServerTransport("/messages", res);
   const sid = transport.sessionId;
@@ -227,12 +221,11 @@ app.get("/mcp", async (req, res) => {
 
   console.log(`[Connect] Session Started: ${sid}`);
   
-  mcpServer.connect(transport).catch(err => {
-    console.error("MCP Connect Error:", err);
-  });
+  await mcpServer.connect(transport);
 
   req.on("close", () => {
     transports.delete(sid);
+    console.log(`[Disconnect] Session closed: ${sid}`);
   });
 });
 
