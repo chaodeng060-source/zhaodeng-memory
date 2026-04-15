@@ -6,28 +6,26 @@ import { createClient } from "@supabase/supabase-js";
 
 const app = express();
 
-// ================== 核心配置 ==================
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ limit: '50mb', extended: true }));
-
+// ================== 1. 核心配置 ==================
 const SUPABASE_URL = process.env.SUPABASE_URL || "https://bnxzymqifuyfcfaairrk.supabase.co";
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 const transports = new Map();
 
-// ================== 基础跨域与防代理缓存 ==================
-app.all("*", (req, res, next) => {
+// ================== 2. 绝对跨域放行 ==================
+// 注意：这里去掉了全局的 express.json()，防止它吞掉 Claude 的握手信息
+app.use((req, res, next) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS, DELETE");
   res.setHeader("Access-Control-Allow-Headers", "*");
   res.setHeader("Access-Control-Expose-Headers", "*");
-  res.setHeader("X-Accel-Buffering", "no"); // 仅保留这一条必备指令，防止 Render 阻塞流
+  res.setHeader("X-Accel-Buffering", "no"); 
   if (req.method === "OPTIONS") return res.status(200).end();
   next();
 });
 
-// ================== 记忆模块分类 ==================
+// ================== 3. 记忆宫殿核心模块 ==================
 const CATEGORY_NAMES = {
   all: '✨ 全部内容', diary: '📔 心情日记', album: '🖼️ 珍贵相册',
   memory_bank: '🧠 记忆库', timeline: '⏳ 时间线', promise: '💍 纪念日',
@@ -35,7 +33,7 @@ const CATEGORY_NAMES = {
 };
 
 function setupMcpServer() {
-  const server = new McpServer({ name: "朝灯的记忆宫殿", version: "9.0.1" });
+  const server = new McpServer({ name: "朝灯的记忆宫殿", version: "9.1.0" });
   
   server.tool("save", {
     content: z.string(),
@@ -57,8 +55,9 @@ function setupMcpServer() {
   return server;
 }
 
-// ================== 网页 API 与界面 ==================
-app.post("/api/write", async (req, res) => {
+// ================== 4. 网页 API 与界面 ==================
+// 关键修复：只在处理你写日记的接口上，开启大容量接收器
+app.post("/api/write", express.json({ limit: '50mb' }), async (req, res) => {
   const { content, category, imageUrl } = req.body;
   let finalContent = content || "";
   if (imageUrl) finalContent += `\n<br><img src="${imageUrl}" class="memory-img">`;
@@ -211,9 +210,8 @@ app.get(["/", "/view"], async (req, res) => {
   res.send(html);
 });
 
-// ================== 标准连接通道 (修复 Headers 冲突) ==================
+// ================== 5. MCP 独立通信通道 ==================
 app.get("/mcp", async (req, res) => {
-  // 移除所有强制写入响应头的操作，由官方 SDK 接管
   const mcpServer = setupMcpServer();
   const transport = new SSEServerTransport("/messages", res);
   const sid = transport.sessionId;
@@ -225,11 +223,11 @@ app.get("/mcp", async (req, res) => {
 
   req.on("close", () => {
     transports.delete(sid);
-    console.log(`[Disconnect] Session closed: ${sid}`);
   });
 });
 
-app.post("/messages", express.json(), async (req, res) => {
+// 关键修复：这里的路由绝对不能加 express.json()
+app.post("/messages", async (req, res) => {
   const sid = req.query.sessionId;
   const transport = transports.get(sid);
   if (transport) {
