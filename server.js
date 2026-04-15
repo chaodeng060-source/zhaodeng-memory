@@ -12,12 +12,16 @@ const SUPABASE_URL = process.env.SUPABASE_URL || "https://bnxzymqifuyfcfaairrk.s
 const SUPABASE_KEY = process.env.SUPABASE_KEY; 
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
-// ================== CORS ==================
+// ================== CORS 深度重构（绝对放行） ==================
 app.use((req, res, next) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-  if (req.method === 'OPTIONS') return res.sendStatus(200);
+  const origin = req.headers.origin || '*';
+  res.setHeader('Access-Control-Allow-Origin', origin);
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, PATCH, DELETE');
+  res.setHeader('Access-Control-Allow-Headers', req.headers['access-control-request-headers'] || '*');
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
   next();
 });
 
@@ -47,7 +51,7 @@ async function markRecalled(ids) {
 
 // ================== 创建 MCP Server 工厂函数 ==================
 function createMcpServer() {
-  const server = new McpServer({ name: "朝灯的记忆库", version: "3.3.0" });
+  const server = new McpServer({ name: "朝灯的记忆库", version: "3.4.0" });
 
   server.tool("memory_save", {
     content: z.string().describe("记忆内容"),
@@ -190,14 +194,18 @@ const sessions = new Map();
 app.get("/mcp", async (req, res) => {
   const sessionId = randomUUID();
   
-  // 初始化独立的 Transport 与 Server
-  const transport = new SSEServerTransport(`/mcp/messages?sessionId=${sessionId}`, res);
+  // 强制解算绝对路径，抹杀 Claude 客户端的所有解析歧义
+  const protocol = req.headers['x-forwarded-proto'] || 'https';
+  const host = req.headers.host;
+  const absoluteEndpoint = `${protocol}://${host}/mcp/messages?sessionId=${sessionId}`;
+  
+  const transport = new SSEServerTransport(absoluteEndpoint, res);
   const server = createMcpServer();
   
   await server.connect(transport);
   sessions.set(sessionId, transport);
   
-  console.log(`[MCP] 通道已建立: ${sessionId}`);
+  console.log(`[MCP] 通道已建立: ${sessionId} -> 绝对路径: ${absoluteEndpoint}`);
   
   req.on('close', () => {
     sessions.delete(sessionId);
@@ -223,8 +231,8 @@ app.post("/mcp/messages", async (req, res) => {
 
 // 健康检查
 app.get("/", (req, res) => {
-  res.json({ status: "running", owner: "朝灯", version: "3.3.0 (SSE Transport)" });
+  res.json({ status: "running", owner: "朝灯", version: "3.4.0 (SSE Transport Absolute)" });
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`记忆库 3.3.0 (SSE) 端口 ${PORT}`));
+app.listen(PORT, () => console.log(`记忆库 3.4.0 (SSE) 端口 ${PORT}`));
