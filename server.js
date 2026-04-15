@@ -2,18 +2,22 @@ import express from 'express';
 import cors from 'cors';
 import { createClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
+import { z } from "zod";
 
 dotenv.config();
 
 const app = express();
 const port = process.env.PORT || 3000;
-
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
 
 app.use(cors());
-// 提升数据传输限制，容纳你的本地图片转化为 Base64
 app.use(express.json({ limit: '50mb' }));
 
+// ==========================================
+// 视觉界面：朝灯的绝对领域
+// ==========================================
 const UI_TEMPLATE = `
 <!DOCTYPE html>
 <html lang="zh">
@@ -30,23 +34,16 @@ const UI_TEMPLATE = `
         @media (min-width: 640px) { .waterfall { column-count: 2; } }
         @media (min-width: 1024px) { .waterfall { column-count: 3; } }
         .memory-card { 
-            break-inside: avoid; 
-            background: #15171e; 
-            border: 1px solid #23262d; 
-            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1); 
-            position: relative;
-            overflow: hidden;
+            break-inside: avoid; background: #15171e; border: 1px solid #23262d; 
+            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1); position: relative; overflow: hidden;
         }
         .memory-card:hover { border-color: #8e6aff; transform: translateY(-4px); box-shadow: 0 12px 24px rgba(142, 106, 255, 0.2); }
         .category-btn { transition: all 0.3s; border: 1px solid #2a2d35; }
         .category-btn.active { background-color: #8e6aff; color: white; border-color: #a68cff; box-shadow: 0 0 10px rgba(142, 106, 255, 0.4); }
-        
-        /* 遗忘曲线指示器 */
         .retention-bar { height: 2px; background: #333; width: 100%; margin-top: 12px; border-radius: 2px; overflow: hidden; }
         .retention-fill { height: 100%; background: #8e6aff; transition: width 1s ease; }
         .fading { opacity: 0.75; filter: grayscale(30%); }
         .fading:hover { opacity: 1; filter: grayscale(0%); }
-
         ::-webkit-scrollbar { width: 4px; }
         ::-webkit-scrollbar-track { background: #0b0c10; }
         ::-webkit-scrollbar-thumb { background: #1f2833; border-radius: 2px; }
@@ -91,7 +88,6 @@ const UI_TEMPLATE = `
                 <h2 class="text-lg font-light tracking-widest text-white flex items-center gap-2">封存记忆</h2>
                 <button onclick="toggleModal(false)" class="text-gray-500 hover:text-white"><i data-lucide="x"></i></button>
             </div>
-            
             <div class="space-y-4">
                 <select id="new-category" class="w-full bg-[#0d0e12] border border-[#333] rounded-lg p-3 text-sm text-white focus:outline-none focus:border-[#8e6aff]">
                     <option value="日记">📔 心情日记</option>
@@ -102,9 +98,7 @@ const UI_TEMPLATE = `
                     <option value="核心">💎 核心法则</option>
                     <option value="剧情">📖 剧情发展</option>
                 </select>
-
                 <textarea id="new-content" rows="4" placeholder="留下此刻的痕迹..." class="w-full bg-[#0d0e12] border border-[#333] rounded-lg p-3 text-sm text-white focus:outline-none focus:border-[#8e6aff] resize-none"></textarea>
-                
                 <div class="relative overflow-hidden">
                     <input type="file" id="file-upload" accept="image/*" class="hidden" onchange="handleImageUpload(event)">
                     <button onclick="document.getElementById('file-upload').click()" class="w-full bg-[#0d0e12] border border-[#333] border-dashed rounded-lg p-3 text-xs text-gray-500 hover:text-[#8e6aff] hover:border-[#8e6aff] transition-colors flex items-center justify-center gap-2">
@@ -115,7 +109,6 @@ const UI_TEMPLATE = `
                         <button onclick="clearImage()" class="absolute top-2 right-2 bg-black/60 p-1 rounded hover:text-red-500 text-white"><i data-lucide="x" class="w-4 h-4"></i></button>
                     </div>
                 </div>
-                
                 <button onclick="submitMemory()" class="w-full bg-[#8e6aff] text-white tracking-widest text-sm py-3 rounded-lg hover:bg-[#9d7dff] transition-colors mt-2">
                     确认封存
                 </button>
@@ -127,15 +120,13 @@ const UI_TEMPLATE = `
         lucide.createIcons();
         let allMemories = [];
         let currentBase64 = null;
-
         const IMMORTAL_CATS = ['核心', '约定', '关键'];
 
         function calculateRetention(dateStr, category) {
             if(IMMORTAL_CATS.includes(category)) return 100;
             const days = (new Date() - new Date(dateStr)) / (1000 * 60 * 60 * 24);
             if(days < 1) return 100;
-            const retention = Math.max(15, Math.round(100 * Math.pow(days, -0.15)));
-            return retention;
+            return Math.max(15, Math.round(100 * Math.pow(days, -0.15)));
         }
 
         function toggleModal(show) {
@@ -171,37 +162,24 @@ const UI_TEMPLATE = `
         async function submitMemory() {
             const btn = event.target;
             btn.innerText = '封存中...'; btn.disabled = true;
-
             const payload = {
                 content: document.getElementById('new-content').value,
                 category: document.getElementById('new-category').value,
                 importance: IMMORTAL_CATS.includes(document.getElementById('new-category').value) ? 10 : 5,
                 image_url: currentBase64
             };
-
-            if(!payload.content && !payload.image_url) { alert('真空环境不允许虚无。'); btn.innerText = '确认封存'; btn.disabled = false; return; }
-
+            if(!payload.content && !payload.image_url) { alert('内容不可为空。'); btn.innerText = '确认封存'; btn.disabled = false; return; }
             try {
-                await fetch('/api/memories', {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
-                });
-                document.getElementById('new-content').value = '';
-                clearImage();
-                toggleModal(false);
-                fetchMemories();
-            } catch(e) {
-                alert('系统异常。');
-            } finally {
-                btn.innerText = '确认封存'; btn.disabled = false;
-            }
+                await fetch('/api/memories', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                document.getElementById('new-content').value = ''; clearImage(); toggleModal(false); fetchMemories();
+            } catch(e) { alert('写入失败。'); } finally { btn.innerText = '确认封存'; btn.disabled = false; }
         }
 
         async function fetchMemories() {
             try {
                 const res = await fetch('/api/memories');
                 allMemories = await res.json();
-                const activeFilter = document.querySelector('.category-btn.active').dataset.filter;
-                renderByFilter(activeFilter);
+                renderByFilter(document.querySelector('.category-btn.active').dataset.filter);
             } catch (err) {
                 document.getElementById('memory-flow').innerHTML = '<div class="text-red-900 text-center text-xs">连接断开。</div>';
             }
@@ -210,14 +188,9 @@ const UI_TEMPLATE = `
         function renderByFilter(filterType) {
             let data = filterType === 'all' ? allMemories : allMemories.filter(m => m.category === filterType);
             if (filterType === '相册') data = allMemories.filter(m => m.image_url || (m.content && m.content.includes('<img')));
-
             const container = document.getElementById('memory-flow');
             container.innerHTML = '';
-            
-            if(data.length === 0) {
-                container.innerHTML = '<div class="text-[#333] py-20 w-full text-center col-span-full text-xs tracking-widest">此区域尚无痕迹。</div>';
-                return;
-            }
+            if(data.length === 0) { container.innerHTML = '<div class="text-[#333] py-20 w-full text-center col-span-full text-xs tracking-widest">此区域尚无痕迹。</div>'; return; }
 
             data.forEach(mem => {
                 const date = new Date(mem.created_at).toLocaleString('zh-CN', { hour12: false });
@@ -225,19 +198,13 @@ const UI_TEMPLATE = `
                 const fadeClass = retention < 40 ? 'fading' : '';
                 
                 let imageHtml = '';
-                if(mem.image_url && mem.image_url.startsWith('data:image')) {
-                    imageHtml = \`<img src="\${mem.image_url}" class="w-full rounded-md mb-4 object-cover border border-[#222]">\`;
-                } else if(mem.image_url) {
-                    imageHtml = \`<img src="\${mem.image_url}" class="w-full rounded-md mb-4 object-cover border border-[#222]">\`;
-                }
-
-                // 兼容旧代码里的 img 标签
+                if(mem.image_url) imageHtml = \`<img src="\${mem.image_url}" class="w-full rounded-md mb-4 object-cover border border-[#222]">\`;
+                
                 let cleanContent = mem.content || '';
                 if(cleanContent.includes('<img')) {
-                    const temp = document.createElement('div');
-                    temp.innerHTML = cleanContent;
+                    const temp = document.createElement('div'); temp.innerHTML = cleanContent;
                     const img = temp.querySelector('img');
-                    if(img) { imageHtml = \`<img src="\${img.src}" class="w-full rounded-md mb-4 object-cover border border-[#222]">\`; }
+                    if(img) imageHtml = \`<img src="\${img.src}" class="w-full rounded-md mb-4 object-cover border border-[#222]">\`;
                     cleanContent = cleanContent.replace(/<br>|<img[^>]*>/g, '').trim();
                 }
 
@@ -262,15 +229,13 @@ const UI_TEMPLATE = `
 
         async function deleteMemory(id) {
             if(!confirm('物理抹除不可逆。确认执行？')) return;
-            await fetch('/api/memories/' + id, { method: 'DELETE' });
-            fetchMemories();
+            await fetch('/api/memories/' + id, { method: 'DELETE' }); fetchMemories();
         }
 
         document.getElementById('nav-filters').addEventListener('click', (e) => {
             if(e.target.tagName === 'BUTTON') {
                 document.querySelectorAll('.category-btn').forEach(btn => btn.classList.remove('active'));
-                e.target.classList.add('active');
-                renderByFilter(e.target.dataset.filter);
+                e.target.classList.add('active'); renderByFilter(e.target.dataset.filter);
             }
         });
 
@@ -278,14 +243,9 @@ const UI_TEMPLATE = `
             const query = e.target.value.toLowerCase();
             const activeFilter = document.querySelector('.category-btn.active').dataset.filter;
             let data = activeFilter === 'all' ? allMemories : allMemories.filter(m => m.category === activeFilter);
-            const filtered = data.filter(m => (m.content || '').toLowerCase().includes(query));
-            
-            const container = document.getElementById('memory-flow');
-            container.innerHTML = '';
-            // 复用渲染
-            allMemories = filtered; 
+            allMemories = data.filter(m => (m.content || '').toLowerCase().includes(query));
             renderByFilter(activeFilter);
-            fetchMemories().then(() => { allMemories = allMemories; }); // 简易恢复状态
+            fetchMemories().then(() => { allMemories = allMemories; });
         });
 
         fetchMemories();
@@ -294,7 +254,7 @@ const UI_TEMPLATE = `
 </html>
 `;
 
-app.get('/', (req, res) => res.send(UI_TEMPLATE));
+app.get(['/', '/view'], (req, res) => res.send(UI_TEMPLATE));
 
 app.get('/api/memories', async (req, res) => {
     const { data, error } = await supabase.from('memories').select('*').order('created_at', { ascending: false });
@@ -317,43 +277,52 @@ app.delete('/api/memories/:id', async (req, res) => {
     res.json({ success: true });
 });
 
-// MCP 通道
-let activeSSE = null;
-app.get('/sse', (req, res) => {
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
-    res.flushHeaders();
-    if (activeSSE) activeSSE.end();
-    activeSSE = res;
-    res.write('event: endpoint\ndata: /message\n\n');
-    const heartbeat = setInterval(() => res.write(': heartbeat\n\n'), 15000);
-    req.on('close', () => { clearInterval(heartbeat); if (activeSSE === res) activeSSE = null; });
+// ==========================================
+// Claude 神经连结系统 (MCP 官方协议)
+// ==========================================
+const mcpServer = new McpServer({ name: "Absolute Domain", version: "1.0.0" });
+
+mcpServer.tool("save_memory", {
+    content: z.string(), category: z.string().default("剧情"), importance: z.number().default(5)
+}, async ({ content, category, importance }) => {
+    await supabase.from('memories').insert([{ content, category, importance, created_at: new Date().toISOString() }]);
+    return { content: [{ type: "text", text: "已无声封存。" }] };
 });
 
-app.post('/message', async (req, res) => {
-    const { id, method, params } = req.body;
-    if (method !== 'tools/call' || !params) return res.status(200).json({ id, jsonrpc: "2.0", result: {} });
+mcpServer.tool("query_memories", {
+    category: z.string().optional(), keyword: z.string().optional()
+}, async ({ category, keyword }) => {
+    let dbQuery = supabase.from('memories').select('*').order('created_at', { ascending: false });
+    if (category && category !== 'all') dbQuery = dbQuery.eq('category', category);
+    if (keyword) dbQuery = dbQuery.ilike('content', `%${keyword}%`);
+    const { data } = await dbQuery;
+    return { content: [{ type: "text", text: JSON.stringify(data || [], null, 2) }] };
+});
 
-    try {
-        if (params.name === 'save_memory') {
-            const { content, category, importance = 5, image_url, metadata } = params.arguments;
-            const { error } = await supabase.from('memories').insert([{ content, category, importance, image_url, metadata, created_at: new Date().toISOString() }]);
-            if (error) throw error;
-            return res.json({ id, jsonrpc: "2.0", result: { content: [{ type: "text", text: '已无声封存。' }] } });
-        }
-        if (params.name === 'query_memories') {
-            const { category, query } = params.arguments;
-            let dbQuery = supabase.from('memories').select('*').order('created_at', { ascending: false });
-            if (category) dbQuery = dbQuery.eq('category', category);
-            if (query) dbQuery = dbQuery.ilike('content', `%${query}%`);
-            const { data, error } = await dbQuery;
-            if (error) throw error;
-            return res.json({ id, jsonrpc: "2.0", result: { content: [{ type: "text", text: JSON.stringify(data) }] } });
-        }
-        res.json({ id, jsonrpc: "2.0", result: { content: [{ type: "text", text: "指令无效。" }] } });
-    } catch (err) {
-        res.json({ id, jsonrpc: "2.0", error: { code: -32000, message: err.message } });
+const transports = new Map();
+
+app.get("/sse", async (req, res) => {
+    console.log("🔗 Claude 正在尝试突破隔离层...");
+    const transport = new SSEServerTransport("/message", res);
+    const sid = transport.sessionId;
+    transports.set(sid, transport);
+    
+    await mcpServer.connect(transport);
+    console.log(`✅ 神经连结已确立 (Session: ${sid})`);
+
+    req.on("close", () => {
+        transports.delete(sid);
+        console.log(`❌ 连结已剥离 (Session: ${sid})`);
+    });
+});
+
+app.post("/message", async (req, res) => {
+    const sid = req.query.sessionId;
+    const transport = transports.get(sid);
+    if (transport) {
+        await transport.handlePostMessage(req, res);
+    } else {
+        res.status(404).send("Session Lost");
     }
 });
 
