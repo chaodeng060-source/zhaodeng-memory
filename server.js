@@ -16,7 +16,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 const transports = new Map();
 
-// ================== 2. 暴力解决跨域与连接挂起 ==================
+// ================== 2. 跨域与防缓存中间件 ==================
 app.all("*", (req, res, next) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS, DELETE");
@@ -25,7 +25,6 @@ app.all("*", (req, res, next) => {
   res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
   res.setHeader("Pragma", "no-cache");
   res.setHeader("Expires", "0");
-  res.setHeader("X-Accel-Buffering", "no"); 
   
   if (req.method === "OPTIONS") return res.status(200).end();
   next();
@@ -39,7 +38,7 @@ const CATEGORY_NAMES = {
 };
 
 function setupMcpServer() {
-  const server = new McpServer({ name: "朝灯的记忆宫殿", version: "8.0.1" });
+  const server = new McpServer({ name: "朝灯的记忆宫殿", version: "8.0.2" });
   
   server.tool("save", {
     content: z.string(),
@@ -218,14 +217,10 @@ app.get(["/", "/view"], async (req, res) => {
   res.send(html);
 });
 
-// ================== 5. 关键：手动握手 SSE 路由 ==================
+// ================== 5. 关键：修复双重写入冲突的路由 ==================
 app.get("/mcp", async (req, res) => {
-  res.writeHead(200, {
-    'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache, no-transform',
-    'Connection': 'keep-alive',
-    'X-Accel-Buffering': 'no'
-  });
+  // 只设置必备的防代理缓存头，让 SDK 自己去管 200 状态码和 Content-Type
+  res.setHeader('X-Accel-Buffering', 'no');
 
   const mcpServer = setupMcpServer();
   const transport = new SSEServerTransport("/messages", res);
@@ -234,6 +229,7 @@ app.get("/mcp", async (req, res) => {
 
   console.log(`[Connect] New Session: ${sid}`);
   
+  // 这里 connect 时 SDK 会自动调用 writeHead，所以我们上面只用 setHeader
   await mcpServer.connect(transport);
 
   req.on("close", () => {
@@ -255,5 +251,5 @@ app.post("/messages", express.json(), async (req, res) => {
 // ================== 6. 强制监听端口 ==================
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`🚀 v8.0 Pro 版已在端口 ${PORT} 强行开启`);
+  console.log(`🚀 v8.0.2 Pro 版已在端口 ${PORT} 安全开启`);
 });
