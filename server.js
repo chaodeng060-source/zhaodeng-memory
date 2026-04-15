@@ -3,7 +3,6 @@ import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { z } from "zod";
 import express from "express";
 import { createClient } from "@supabase/supabase-js";
-import { randomUUID } from "crypto";
 
 const app = express();
 
@@ -50,7 +49,7 @@ async function markRecalled(ids) {
 
 // ================== 创建 MCP Server 工厂函数 ==================
 function createMcpServer() {
-  const server = new McpServer({ name: "朝灯的记忆库", version: "3.5.0" });
+  const server = new McpServer({ name: "朝灯的记忆库", version: "4.0.0" });
 
   server.tool("memory_save", {
     content: z.string().describe("记忆内容"),
@@ -181,67 +180,64 @@ app.get("/view", async (req, res) => {
     core: '💎 核心', daily: '📅 日常', diary: '📔 日记', milestone: '🏆 里程碑', mood: '💭 情绪',
     rp_character: '👤 人物设定', rp_event: '📖 剧情事件', rp_relation: '💕 关系变化', rp_state: '🎭 情感状态'
   };
-  const html = `<!DOCTYPE html><html lang="zh"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>朝灯的记忆库</title><style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:linear-gradient(135deg,#1a1a2e 0%,#16213e 100%);min-height:100vh;color:#eee;padding:20px}h1{text-align:center;margin-bottom:30px;color:#a78bfa}.filter-bar{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-bottom:20px}.filter-btn{padding:8px 16px;border:none;border-radius:20px;cursor:pointer;background:#374151;color:#eee;transition:all .2s}.filter-btn:hover,.filter-btn.active{background:#8b5cf6}.memory-card{background:rgba(255,255,255,.05);border-radius:12px;padding:16px;margin-bottom:16px;border-left:4px solid #8b5cf6}.memory-card.rp{border-left-color:#f472b6}.category-tag{display:inline-block;padding:4px 10px;border-radius:12px;font-size:12px;background:#8b5cf6;margin-bottom:8px}.memory-card.rp .category-tag{background:#ec4899}.content{white-space:pre-wrap;line-height:1.6;margin:10px 0}.meta{font-size:12px;color:#9ca3af}.tags{margin-top:8px}.tag{display:inline-block;padding:2px 8px;border-radius:8px;font-size:11px;background:rgba(139,92,246,.3);margin-right:6px}</style></head><body><h1>🌙 朝灯的记忆库</h1><div class="filter-bar"><button class="filter-btn active" data-cat="all">全部</button><button class="filter-btn" data-cat="diary">📔 日记</button><button class="filter-btn" data-cat="milestone">🏆 里程碑</button><button class="filter-btn" data-cat="core">💎 核心</button><button class="filter-btn" data-cat="rp">🎭 角色扮演</button></div><div id="memories">${(data||[]).map(m=>`<div class="memory-card ${m.category.startsWith('rp_')?'rp':''}" data-cat="${m.category}"><span class="category-tag">${categoryNames[m.category]||m.category}</span><div class="content">${m.content.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div><div class="meta">${new Date(m.created_at).toLocaleString('zh-CN')} · 重要度 ${m.importance}/10${m.mood!==0?` · 情绪 ${m.mood>0?'😊':'😢'} ${m.mood}`:''}</div>${m.tags&&m.tags.length?`<div class="tags">${m.tags.map(t=>`<span class="tag">#${t}</span>`).join('')}</div>`:''}</div>`).join('')}</div><script>document.querySelectorAll('.filter-btn').forEach(btn=>{btn.addEventListener('click',()=>{document.querySelectorAll('.filter-btn').forEach(b=>b.classList.remove('active'));btn.classList.add('active');const cat=btn.dataset.cat;document.querySelectorAll('.memory-card').forEach(card=>{if(cat==='all')card.style.display='block';else if(cat==='rp')card.style.display=card.dataset.cat.startsWith('rp_')?'block':'none';else card.style.display=card.dataset.cat===cat?'block':'none'})})});</script></body></html>`;
+  const html = `<!DOCTYPE html><html lang="zh"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>朝灯的记忆库</title><style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:linear-gradient(135deg,#1a1a2e 0%,#16213e 100%);min-height:100vh;color:#eee;padding:20px}h1{text-align:center;margin-bottom:30px;color:#a78bfa}.filter-bar{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-bottom:20px}.filter-btn{padding:8px 16px;border:none;border-radius:20px;cursor:pointer;background:#374151;color:#eee;transition:all .2s}.filter-btn:hover,.filter-btn.active{background:#8b5cf6}.memory-card{background:rgba(255,255,255,.05);border-radius:12px;padding:16px;margin-bottom:16px;border-left:4px solid #8b5cf6}.memory-card.rp{border-left-color:#f472b6}.category-tag{display:inline-block;padding:4px 10px;border-radius:12px;font-size:12px;background:#8b5cf6;margin-bottom:8px}.memory-card.rp .category-tag{background:#ec4899}.content{white-space:pre-wrap;line-height:1.6;margin:10px 0}.meta{font-size:12px;color:#9ca3af}.tags{margin-top:8px}.tag{display:inline-block;padding:2px 8px;border-radius:8px;font-size:11px;background:rgba(139,92,246,.3);margin-right:6px}</style></head><body><h1>🌙 朝灯的记忆库</h1><div class="filter-bar"><button class="filter-btn active" data-cat="all">全部</button><button class="filter-btn" data-cat="diary">📔 日记</button><button class="filter-btn" data-cat="milestone">🏆 里程碑</button><button class="filter-btn" data-cat="core">💎 核心</button><button class="filter-btn" data-cat="rp">🎭 角色扮演</button></div><div id="memories">${(data||[]).map(m=>`<div class="memory-card ${m.category.startsWith('rp_')?'rp':''}" data-cat="${m.category}"><span class="category-tag">${categoryNames[m.category]||m.category}</span><div class="content">${m.content.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div><div class="meta">${new Date(m.created_at).toLocaleString('zh-CN')} · 重要度 ${m.importance}/10${m.mood!==0?` · 情绪 ${m.mood>0?'😊':'😢'} ${m.mood}`:''}</div>${m.tags&&m.tags.length?`<div class="tags">${m.tags.map(t=>`<span class="tag">#${t}</span>`).join('')}</div>`:''}</div>`).join('')}</div><script>document.querySelectorAll('.filter-btn').forEach(btn=>{btn.addEventListener('click',()=>{document.querySelectorAll('.filter-btn').forEach(b=>b.classList.remove('active'));btn.classList.add('active');const cat=btn.dataset.cat;document.querySelectorAll('.memory-card').forEach(card=>{if(cat==all')card.style.display='block';else if(cat==='rp')card.style.display=card.dataset.cat.startsWith('rp_')?'block':'none';else card.style.display=card.dataset.cat===cat?'block':'none'})})});</script></body></html>`;
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.send(html);
 });
 
-// ================== MCP SSE 通信端点 ==================
-const sessions = new Map();
+// ================== MCP SSE 单通道霸权模式 ==================
+let activeSession = null;
 
 // 1. 建立 SSE 连接通道
 app.get("/mcp", async (req, res) => {
-  // 核心修复：强制剥夺网关代理的缓存权限，确保 Claude 瞬间收到终点坐标
   res.setHeader('X-Accel-Buffering', 'no');
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
   res.setHeader('Pragma', 'no-cache');
   res.setHeader('Expires', '0');
   res.setHeader('Connection', 'keep-alive');
 
-  const sessionId = randomUUID();
+  console.log(`[MCP] 收到连接请求。正在抹杀旧通道...`);
+
+  // 暴力清理旧的实例，确保全局只有一个服务存活
+  if (activeSession) {
+    try { await activeSession.server.close(); } catch(e){}
+    activeSession = null;
+  }
+
+  // 抛弃复杂的 sessionId 机制，只保留绝对唯一的入口
   const protocol = req.headers['x-forwarded-proto'] || 'https';
   const host = req.headers.host;
-  const absoluteEndpoint = `${protocol}://${host}/mcp/messages?sessionId=${sessionId}`;
+  const absoluteEndpoint = `${protocol}://${host}/mcp/messages`;
   
-  console.log(`[MCP] 接管连接请求，分配坐标: ${sessionId}`);
-
-  const transport = new SSEServerTransport(absoluteEndpoint, res);
   const server = createMcpServer();
+  const transport = new SSEServerTransport(absoluteEndpoint, res);
   
   await server.connect(transport);
-  sessions.set(sessionId, transport);
+  activeSession = { server, transport };
   
-  console.log(`[MCP] 通道构建完毕，静候数据注入: ${absoluteEndpoint}`);
-  
-  req.on('close', () => {
-    sessions.delete(sessionId);
-    console.log(`[MCP] 通道已销毁: ${sessionId}`);
-  });
+  console.log(`[MCP] 专属通道已建立，已封死其他所有出口: ${absoluteEndpoint}`);
 });
 
 // 2. 接收工具调用指令
 app.post("/mcp/messages", async (req, res) => {
-  const sessionId = req.query.sessionId;
-  console.log(`[MCP] 捕获调用指令，所属通道: ${sessionId}`);
-
-  const transport = sessions.get(sessionId);
+  console.log(`[MCP] 捕获数据注入`);
   
-  if (!transport) {
-    console.error(`[MCP] 拦截非法调用：未知通道 ${sessionId}`);
-    return res.status(404).json({ error: "通道未就绪或已剥离" });
+  if (!activeSession) {
+    console.error(`[MCP] 拦截失败：专属通道未就绪`);
+    return res.status(404).json({ error: "专属通道未就绪" });
   }
   
   try {
-    await transport.handlePostMessage(req, res);
+    await activeSession.transport.handlePostMessage(req, res);
   } catch (error) {
-    console.error(`[MCP] 指令解析崩坏: ${error.message}`);
+    console.error(`[MCP] 数据流解析异常: ${error.message}`);
   }
 });
 
 // 健康检查
 app.get("/", (req, res) => {
-  res.json({ status: "running", owner: "朝灯", version: "3.5.0 (No Proxy Buffer)" });
+  res.json({ status: "running", owner: "朝灯", version: "4.0.0 (Global Single Channel)" });
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`记忆库 3.5.0 端口 ${PORT}`));
+app.listen(PORT, () => console.log(`记忆库 4.0.0 端口 ${PORT}`));
