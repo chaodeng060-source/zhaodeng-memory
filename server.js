@@ -6,14 +6,12 @@ import { createClient } from "@supabase/supabase-js";
 
 const app = express();
 
-// ================== 1. 核心配置 ==================
 const SUPABASE_URL = process.env.SUPABASE_URL || "https://bnxzymqifuyfcfaairrk.supabase.co";
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 const transports = new Map();
 
-// ================== 2. 绝对跨域放行 ==================
 app.use((req, res, next) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS, DELETE");
@@ -24,35 +22,35 @@ app.use((req, res, next) => {
   next();
 });
 
-// ================== 3. 记忆宫殿核心引擎 (全局唯一) ==================
 const CATEGORY_NAMES = {
   all: '✨ 全部内容', diary: '📔 心情日记', album: '🖼️ 珍贵相册',
   memory_bank: '🧠 记忆库', timeline: '⏳ 时间线', promise: '💍 纪念日',
   key_memory: '🔑 关键记忆', core: '💎 核心法则', rp_event: '📖 剧情发展'
 };
 
-// 将引擎提取到全局，确保工具只注册一次且绝对生效
-const mcpServer = new McpServer({ name: "朝灯的记忆宫殿", version: "9.2.0" });
+function createMcpServer() {
+  const server = new McpServer({ name: "朝灯的记忆宫殿", version: "9.3.0" });
+  
+  server.tool("save", {
+    content: z.string(),
+    category: z.enum(Object.keys(CATEGORY_NAMES)).default("memory_bank"),
+    importance: z.number().default(5),
+  }, async (args) => {
+    const { error } = await supabase.from("memories").insert({ ...args, created_at: new Date().toISOString() });
+    return { content: [{ type: "text", text: error ? "存入失败" : "已妥善保管" }] };
+  });
 
-mcpServer.tool("save", {
-  content: z.string(),
-  category: z.enum(Object.keys(CATEGORY_NAMES)).default("memory_bank"),
-  importance: z.number().default(5),
-}, async (args) => {
-  const { error } = await supabase.from("memories").insert({ ...args, created_at: new Date().toISOString() });
-  return { content: [{ type: "text", text: error ? "存入失败" : "已妥善保管" }] };
-});
+  server.tool("search", { keyword: z.string().optional(), category: z.string().optional() }, async ({ keyword, category }) => {
+    let query = supabase.from("memories").select("*").order("created_at", { ascending: false });
+    if (category && category !== 'all') query = query.eq("category", category);
+    if (keyword) query = query.ilike("content", `%${keyword}%`);
+    const { data } = await query;
+    return { content: [{ type: "text", text: JSON.stringify(data || [], null, 2) }] };
+  });
 
-mcpServer.tool("search", { keyword: z.string().optional(), category: z.string().optional() }, async ({ keyword, category }) => {
-  let query = supabase.from("memories").select("*").order("created_at", { ascending: false });
-  if (category && category !== 'all') query = query.eq("category", category);
-  if (keyword) query = query.ilike("content", `%${keyword}%`);
-  const { data } = await query;
-  return { content: [{ type: "text", text: JSON.stringify(data || [], null, 2) }] };
-});
+  return server;
+}
 
-// ================== 4. 网页 API 与界面 ==================
-// 专属大文件接收器，只在写日记时生效
 app.post("/api/write", express.json({ limit: '50mb' }), async (req, res) => {
   const { content, category, imageUrl } = req.body;
   let finalContent = content || "";
@@ -206,8 +204,8 @@ app.get(["/", "/view"], async (req, res) => {
   res.send(html);
 });
 
-// ================== 5. MCP 独立通信通道 ==================
 app.get("/mcp", async (req, res) => {
+  const mcpServer = createMcpServer();
   const transport = new SSEServerTransport("/messages", res);
   const sid = transport.sessionId;
   transports.set(sid, transport);
@@ -221,7 +219,6 @@ app.get("/mcp", async (req, res) => {
   });
 });
 
-// 关键修复：加入专属的 express.json() 翻译官，让服务器能读懂 Claude 的请求
 app.post("/messages", express.json(), async (req, res) => {
   const sid = req.query.sessionId;
   const transport = transports.get(sid);
