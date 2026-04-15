@@ -1,5 +1,5 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { z } from "zod";
 import express from "express";
 import { createClient } from "@supabase/supabase-js";
@@ -15,9 +15,8 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 // ================== CORS ==================
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept, mcp-session-id');
-  res.setHeader('Access-Control-Expose-Headers', 'mcp-session-id');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   if (req.method === 'OPTIONS') return res.sendStatus(200);
   next();
 });
@@ -48,7 +47,7 @@ async function markRecalled(ids) {
 
 // ================== 创建 MCP Server 工厂函数 ==================
 function createMcpServer() {
-  const server = new McpServer({ name: "朝灯的记忆库", version: "3.2.0" });
+  const server = new McpServer({ name: "朝灯的记忆库", version: "3.3.0" });
 
   server.tool("memory_save", {
     content: z.string().describe("记忆内容"),
@@ -172,9 +171,6 @@ function createMcpServer() {
   return server;
 }
 
-// 提取为全局单例，避免每次请求重复初始化
-const globalMcpServer = createMcpServer();
-
 // ================== 网页查看界面 ==================
 app.get("/view", async (req, res) => {
   const { data } = await supabase.from('memories').select('*').order('created_at', { ascending: false }).limit(100);
@@ -187,67 +183,48 @@ app.get("/view", async (req, res) => {
   res.send(html);
 });
 
-// ================== Streamable HTTP MCP 端点 ==================
+// ================== MCP SSE 通信端点 ==================
 const sessions = new Map();
 
-app.all("/mcp", async (req, res) => {
-  console.log(`MCP 请求: ${req.method}`);
+// 1. 建立 SSE 连接通道
+app.get("/mcp", async (req, res) => {
+  const sessionId = randomUUID();
   
-  // 处理 GET 请求（用于 SSE 兼容）
-  if (req.method === 'GET') {
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
-    
-    const sessionId = randomUUID();
-    res.write(`event: endpoint\ndata: /mcp?sessionId=${sessionId}\n\n`);
-    
-    sessions.set(sessionId, globalMcpServer);
-    
-    req.on('close', () => {
-      sessions.delete(sessionId);
-      console.log(`Session ${sessionId} 关闭`);
-    });
-    return;
-  }
+  // 初始化独立的 Transport 与 Server
+  const transport = new SSEServerTransport(`/mcp/messages?sessionId=${sessionId}`, res);
+  const server = createMcpServer();
   
-  // 处理 POST 请求（Streamable HTTP）
-  if (req.method === 'POST') {
-    try {
-      const transport = new StreamableHTTPServerTransport({
-        sessionIdGenerator: () => randomUUID(),
-      });
-      
-      // 先 connect，再处理请求。且直接传递 req 和 res。
-      await globalMcpServer.connect(transport);
-      await transport.handleRequest(req, res);
-    } catch (error) {
-      console.error('MCP 错误:', error);
-      if (!res.headersSent) {
-        res.status(500).json({ error: error.message });
-      }
-    }
-    return;
-  }
+  await server.connect(transport);
+  sessions.set(sessionId, transport);
   
-  // 处理 DELETE 请求（会话终止）
-  if (req.method === 'DELETE') {
-    res.status(200).json({ ok: true });
-    return;
-  }
+  console.log(`[MCP] 通道已建立: ${sessionId}`);
   
-  res.status(405).json({ error: 'Method not allowed' });
+  req.on('close', () => {
+    sessions.delete(sessionId);
+    console.log(`[MCP] 通道已断开: ${sessionId}`);
+  });
 });
 
-// 也支持 /sse 路径（向后兼容）
-app.get("/sse", (req, res) => {
-  res.redirect(307, '/mcp');
+// 2. 接收工具调用指令
+app.post("/mcp/messages", async (req, res) => {
+  const sessionId = req.query.sessionId;
+  const transport = sessions.get(sessionId);
+  
+  if (!transport) {
+    return res.status(404).json({ error: "会话已过期或不存在" });
+  }
+  
+  try {
+    await transport.handlePostMessage(req, res);
+  } catch (error) {
+    console.error(`[MCP] 指令执行异常: ${error.message}`);
+  }
 });
 
 // 健康检查
 app.get("/", (req, res) => {
-  res.json({ status: "running", owner: "朝灯", version: "3.2.0 (Streamable HTTP)" });
+  res.json({ status: "running", owner: "朝灯", version: "3.3.0 (SSE Transport)" });
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`记忆库 3.2.0 (Streamable HTTP) 端口 ${PORT}`));
+app.listen(PORT, () => console.log(`记忆库 3.3.0 (SSE) 端口 ${PORT}`));
