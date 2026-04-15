@@ -1,15 +1,1 @@
-{
-  "name": "zhaodeng-memory",
-  "version": "1.0.0",
-  "type": "module",
-  "description": "朝灯的记忆库",
-  "main": "server.js",
-  "scripts": {
-    "start": "node server.js"
-  },
-  "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.0.1",
-    "express": "^4.18.2",
-    "zod": "^3.22.4"
-  }
-}
+
