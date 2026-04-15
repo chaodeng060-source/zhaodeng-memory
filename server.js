@@ -38,78 +38,32 @@ async function markRecalled(ids) {
   await supabase.from("memories").update({ last_recalled: new Date().toISOString() }).in("id", ids);
 }
 
-// ================== MCP Server 设置 ==================
+// ================== MCP Server 工具注册 ==================
 function setupMcpServer() {
   const server = new McpServer({ name: "朝灯的记忆库", version: "4.5.0" });
 
-  // 1. 记忆保存
   server.tool("memory_save", {
-    content: z.string().describe("记忆内容"),
+    content: z.string(),
     category: z.enum(["core", "daily", "diary", "milestone", "mood", "rp_character", "rp_event", "rp_relation", "rp_state"]).default("daily"),
     tags: z.array(z.string()).default([]),
     importance: z.number().min(1).max(10).default(5),
     mood: z.number().min(-1).max(1).default(0),
   }, async (args) => {
-    const { error } = await supabase.from("memories").insert({ ...args, created_at: new Date().toISOString(), last_recalled: new Date().toISOString(), recall_count: 0 });
-    return { content: [{ type: "text", text: error ? `保存失败：${error.message}` : `记忆已存入 [${args.category}]` }] };
+    const { error } = await supabase.from("memories").insert({ ...args, created_at: new Date().toISOString() });
+    return { content: [{ type: "text", text: error ? `失败: ${error.message}` : `记忆已存入 [${args.category}]` }] };
   });
 
-  // 2. 记忆读取
-  server.tool("memory_read", {
-    category: z.string().optional(),
-    limit: z.number().min(1).max(50).default(10),
-  }, async ({ category, limit }) => {
+  server.tool("memory_read", { category: z.string().optional(), limit: z.number().default(10) }, async ({ category, limit }) => {
     let query = supabase.from("memories").select("*").order("created_at", { ascending: false }).limit(limit);
     if (category) query = query.eq("category", category);
-    const { data, error } = await query;
-    if (error) return { content: [{ type: "text", text: `读取失败：${error.message}` }] };
-    await markRecalled(data.map(m => m.id));
+    const { data } = await query;
+    await markRecalled(data?.map(m => m.id));
     return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
   });
 
-  // 3. 记忆搜索
-  server.tool("memory_search", { keyword: z.string(), limit: z.number().default(10) }, async ({ keyword, limit }) => {
-    const { data, error } = await supabase.from("memories").select("*").ilike("content", `%${keyword}%`).limit(limit);
-    if (error) return { content: [{ type: "text", text: `搜索失败：${error.message}` }] };
-    await markRecalled(data.map(m => m.id));
+  server.tool("memory_search", { keyword: z.string() }, async ({ keyword }) => {
+    const { data } = await supabase.from("memories").select("*").ilike("content", `%${keyword}%`);
     return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
-  });
-
-  // 4. 遗忘曲线浮现
-  server.tool("memory_surface", { limit: z.number().default(5) }, async ({ limit }) => {
-    const { data, error } = await supabase.from("memories").select("*");
-    if (error) return { content: [{ type: "text", text: `提取失败：${error.message}` }] };
-    const sorted = data.sort((a, b) => calculateScore(b) - calculateScore(a)).slice(0, limit);
-    await markRecalled(sorted.map(m => m.id));
-    return { content: [{ type: "text", text: "根据权重提取的回忆：\n" + JSON.stringify(sorted, null, 2) }] };
-  });
-
-  // 5. 统计
-  server.tool("memory_stats", {}, async () => {
-    const { data, error } = await supabase.from("memories").select("category");
-    if (error) return { content: [{ type: "text", text: "统计失败" }] };
-    const stats = data.reduce((acc, curr) => {
-      acc[curr.category] = (acc[curr.category] || 0) + 1;
-      return acc;
-    }, { total: data.length });
-    return { content: [{ type: "text", text: `统计：${JSON.stringify(stats, null, 2)}` }] };
-  });
-
-  // 6. RP 专用保存
-  server.tool("rp_save", {
-    type: z.enum(["character", "event", "relation", "state"]),
-    character_name: z.string(),
-    content: z.string(),
-    importance: z.number().default(7)
-  }, async ({ type, character_name, content, importance }) => {
-    const { error } = await supabase.from("memories").insert({
-      content: `[${character_name}] ${content}`,
-      category: `rp_${type}`,
-      tags: [character_name],
-      importance,
-      created_at: new Date().toISOString()
-    });
-    return { content: [{ type: "text", text: error ? "保存失败" : `RP记忆已记录 [${character_name}]` }] };
   });
 
   return server;
@@ -117,42 +71,95 @@ function setupMcpServer() {
 
 const mcpServer = setupMcpServer();
 
-// ================== SSE 路由 ==================
-
-// 建立 SSE 连接
-app.get("/mcp", async (req, res) => {
-  console.log("[SSE] GET /mcp - 尝试建立连接");
-  const transport = new SSEServerTransport("/messages", res);
+// ================== 你最关心的：可视化日记页面 (HTML) ==================
+app.get("/", async (req, res) => {
+  const { data: memories } = await supabase.from("memories").select("*").order("created_at", { ascending: false });
   
-  const sid = transport.sessionId;
-  transports.set(sid, transport);
-  
-  await mcpServer.connect(transport);
-  console.log(`[SSE] Session 激活: ${sid}`);
+  const categoryNames = {
+    core: "核心记忆", daily: "日常", diary: "日记", milestone: "里程碑",
+    mood: "心情", rp_character: "人设", rp_event: "事件", rp_relation: "关系", rp_state: "状态"
+  };
 
-  req.on("close", () => {
-    transports.delete(sid);
-    console.log(`[SSE] Session 关闭: ${sid}`);
-  });
+  const html = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>朝灯的记忆库</title>
+  <style>
+    body { font-family: -apple-system, sans-serif; background: #f0f2f5; padding: 20px; color: #1a1a1a; }
+    .container { max-width: 800px; margin: 0 auto; }
+    .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+    .filter-bar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 20px; }
+    .filter-btn { padding: 6px 12px; border-radius: 15px; border: none; background: #fff; cursor: pointer; font-size: 13px; }
+    .filter-btn.active { background: #007aff; color: #fff; }
+    .memory-card { background: #fff; border-radius: 12px; padding: 16px; margin-bottom: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); }
+    .memory-card.rp { border-left: 4px solid #af52de; }
+    .category-tag { font-size: 11px; padding: 2px 8px; border-radius: 10px; background: #eef; color: #55f; margin-bottom: 8px; display: inline-block; }
+    .content { line-height: 1.6; white-space: pre-wrap; margin-bottom: 10px; }
+    .meta { font-size: 12px; color: #8e8e93; }
+    .tags { margin-top: 8px; }
+    .tag { font-size: 11px; color: #007aff; margin-right: 8px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>朝灯的记忆库</h1>
+      <span style="font-size: 12px; color: #52c41a;">● 系统运行中 (SSE)</span>
+    </div>
+    <div class="filter-bar">
+      <button class="filter-btn active" data-cat="all">全部</button>
+      <button class="filter-btn" data-cat="diary">日记</button>
+      <button class="filter-btn" data-cat="rp">人设/剧情</button>
+      <button class="filter-btn" data-cat="mood">心情</button>
+    </div>
+    <div id="memory-list">
+      ${(memories || []).map(m => `
+        <div class="memory-card ${m.category.startsWith('rp_') ? 'rp' : ''}" data-cat="${m.category}">
+          <span class="category-tag">${categoryNames[m.category] || m.category}</span>
+          <div class="content">${m.content}</div>
+          <div class="meta">${new Date(m.created_at).toLocaleString('zh-CN')} · 重要度 ${m.importance}</div>
+          ${m.tags ? `<div class="tags">${m.tags.map(t => `<span class="tag">#${t}</span>`).join('')}</div>` : ''}
+        </div>
+      `).join('')}
+    </div>
+  </div>
+  <script>
+    document.querySelectorAll('.filter-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        const cat = btn.dataset.cat;
+        document.querySelectorAll('.memory-card').forEach(card => {
+          if (cat === 'all') card.style.display = 'block';
+          else if (cat === 'rp') card.style.display = card.dataset.cat.startsWith('rp_') ? 'block' : 'none';
+          else card.style.display = card.dataset.cat === cat ? 'block' : 'none';
+        });
+      });
+    });
+  </script>
+</body>
+</html>`;
+  res.send(html);
 });
 
-// 处理消息推送
+// ================== SSE 连接逻辑 (解决 Claude 连接问题的核心) ==================
+app.get("/mcp", async (req, res) => {
+  const transport = new SSEServerTransport("/messages", res);
+  const sid = transport.sessionId;
+  transports.set(sid, transport);
+  await mcpServer.connect(transport);
+  req.on("close", () => transports.delete(sid));
+});
+
 app.post("/messages", express.json(), async (req, res) => {
   const sid = req.query.sessionId;
   const transport = transports.get(sid);
-
-  if (!transport) {
-    console.error(`[SSE] 找不到 Session: ${sid}`);
-    return res.status(404).send("Session not found");
-  }
-
-  await transport.handlePostMessage(req, res);
-});
-
-// ================== 其他 ==================
-app.get("/", (req, res) => {
-  res.json({ status: "running", engine: "SSE (v4.5.0)", sessions: transports.size });
+  if (transport) await transport.handlePostMessage(req, res);
+  else res.status(404).send("Session not found");
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`🚀 记忆库 SSE 运行在端口 ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 记忆库运行在端口 ${PORT}`));
