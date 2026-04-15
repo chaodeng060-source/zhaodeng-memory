@@ -51,7 +51,7 @@ async function markRecalled(ids) {
 
 const server = new McpServer({
   name: "朝灯的记忆库",
-  version: "3.0.0",
+  version: "3.0.1",
 });
 
 // ================== 工具 1: memory_save ==================
@@ -322,24 +322,37 @@ app.get("/view", async (req, res) => {
   res.send(html);
 });
 
-// ================== MCP 连接 ==================
-let transport;
+// ================== 核心修复：单例连接模式 ==================
+let transport = null;
+
 app.get("/sse", async (req, res) => {
+  if (transport) {
+    console.log("正在重置旧的连接...");
+  }
+  
   transport = new SSEServerTransport("/messages", res);
-  await server.connect(transport);
+  try {
+    await server.connect(transport);
+    console.log("MCP SSE 连接已建立");
+  } catch (error) {
+    console.error("连接建立失败:", error);
+  }
 });
 
 app.post("/messages", express.raw({ type: '*/*' }), async (req, res) => {
+  if (!transport) {
+    return res.status(400).send("尚未建立 SSE 连接");
+  }
   await transport.handlePostMessage(req, res);
 });
 
 // 健康检查
 app.get("/", (req, res) => {
-  res.json({ status: "running", owner: "朝灯", version: "3.0 Supabase + RP 版" });
+  res.json({ status: "running", owner: "朝灯", version: "3.0.1 (Fixed)" });
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`记忆库 3.0 已上线！端口：${PORT}`);
+  console.log(`记忆库 3.0.1 已修复上线！端口：${PORT}`);
   console.log(`网页查看：http://localhost:${PORT}/view`);
 });
