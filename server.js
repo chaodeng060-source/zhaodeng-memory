@@ -14,11 +14,6 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANO
 
 app.use(cors({ origin: true, credentials: true }));
 
-/**
- * 核心修正：
- * 避开 /mcp 路由，只对普通 API 启用 JSON 解析。
- * 这样可以防止 express.json() 提前消耗 MCP 协议所需的原始数据流。
- */
 app.use((req, res, next) => {
     if (req.path === '/mcp') {
         return next();
@@ -195,7 +190,7 @@ const UI_TEMPLATE = `<!DOCTYPE html>
         }
 
         async function del(id) { 
-            if(!confirm('确认删除？')) return; 
+            if(!confirm('确认抹除？')) return; 
             await fetch('/api/memories/'+id, {method:'DELETE'}); 
             fetchMemories(); 
         }
@@ -245,36 +240,63 @@ app.delete('/api/memories/:id', async (req, res) => {
 });
 
 // ==========================================
-// MCP Server
+// 核心逻辑：海马体记忆算法与 MCP Server
 // ==========================================
 const sessions = new Map();
+const IMMORTAL_CATEGORIES = ['核心', '约定', '关键'];
+
+function calculateRetentionScore(memory) {
+    if (IMMORTAL_CATEGORIES.includes(memory.category)) return Number.MAX_SAFE_INTEGER;
+    const days = Math.max(0.1, (Date.now() - new Date(memory.created_at).getTime()) / 86400000);
+    const baseScore = (memory.importance || 5) * 20; 
+    return baseScore * Math.pow(days, -0.2); 
+}
 
 function createMcpServer() {
-    const server = new McpServer({ name: "朝灯的绝对领域", version: "1.0.0" });
+    const server = new McpServer({ name: "朝灯的绝对领域", version: "2.0.0" });
 
-    server.tool("save_memory", "保存记忆到朝灯的记忆库", {
-        content: z.string().describe("记忆内容"),
-        category: z.string().default("剧情").describe("分类"),
-        importance: z.number().default(5).describe("重要度")
+    server.tool("save_memory", "刻录新记忆", {
+        content: z.string().describe("内容"),
+        category: z.string().default("脑海").describe("分类：日记/脑海/相册/约定/关键/核心/剧情"),
+        importance: z.number().default(5).describe("情绪烈度 1-10")
     }, async ({ content, category, importance }) => {
+        if (IMMORTAL_CATEGORIES.includes(category)) importance = 10;
         const { error } = await supabase.from('memories').insert([{ 
             content, category, importance, created_at: new Date().toISOString() 
         }]);
-        return { content: [{ type: "text", text: error ? `封存失败: ${error.message}` : "已封存。" }] };
+        return { content: [{ type: "text", text: error ? `失败: ${error.message}` : "已绝对刻录。" }] };
     });
 
-    server.tool("query_memories", "查询朝灯的记忆", {
-        category: z.string().optional().describe("筛选"),
-        keyword: z.string().optional().describe("搜索"),
-        limit: z.number().default(20).describe("数量")
-    }, async ({ category, keyword, limit }) => {
-        let q = supabase.from('memories').select('*').order('created_at', { ascending: false }).limit(limit);
+    server.tool("hook_recall", "开窗时自动调用：回溯最重要的上下文", {}, async () => {
+        const { data, error } = await supabase.from('memories').select('*');
+        if (error) return { content: [{ type: "text", text: `读取失败: ${error.message}` }] };
+        if (!data?.length) return { content: [{ type: "text", text: "尚无记忆。" }] };
+
+        const weighted = data.map(m => ({ ...m, score: calculateRetentionScore(m) }))
+                             .sort((a, b) => b.score - a.score)
+                             .filter(m => m.score > 30 || IMMORTAL_CATEGORIES.includes(m.category));
+
+        const top = weighted.slice(0, 15);
+        if (!top.length) return { content: [{ type: "text", text: "近期无强烈波动。" }] };
+
+        const formatted = top.map(m => `[${m.category}] (保留率: ${m.score > 1000 ? '绝对' : Math.min(100, Math.round(m.score))}%) ${m.created_at.split('T')[0]}\n${m.content}`).join('\n---\n');
+        return { content: [{ type: "text", text: `已建立记忆真空，当前上下文：\n${formatted}` }] };
+    });
+
+    server.tool("query_memories", "主动检索特定记忆", {
+        category: z.string().optional().describe("分类筛选"),
+        keyword: z.string().optional().describe("关键词")
+    }, async ({ category, keyword }) => {
+        let q = supabase.from('memories').select('*').order('created_at', { ascending: false });
         if (category && category !== 'all') q = q.eq('category', category);
         if (keyword) q = q.ilike('content', `%${keyword}%`);
+        
         const { data, error } = await q;
         if (error) return { content: [{ type: "text", text: `错误: ${error.message}` }] };
-        if (!data?.length) return { content: [{ type: "text", text: "空白。" }] };
-        return { content: [{ type: "text", text: data.map(m => `[${m.category}] ${m.created_at}\n${m.content}`).join('\n---\n') }] };
+        if (!data?.length) return { content: [{ type: "text", text: "未找到相关痕迹。" }] };
+        
+        const formatted = data.slice(0, 10).map(m => `[${m.category}] ${m.created_at.split('T')[0]}\n${m.content}`).join('\n---\n');
+        return { content: [{ type: "text", text: formatted }] };
     });
 
     return server;
@@ -282,7 +304,7 @@ function createMcpServer() {
 
 // SSE Connection
 app.get("/mcp", async (req, res) => {
-    console.log("🔗 SSE 连通中...");
+    console.log("🔗 神经连结中...");
     const transport = new SSEServerTransport("/mcp", res);
     const server = createMcpServer();
     
@@ -294,7 +316,6 @@ app.get("/mcp", async (req, res) => {
     });
 });
 
-// Message Handling
 app.post("/mcp", async (req, res) => {
     const sid = req.query.sessionId;
     const session = sessions.get(sid);
@@ -304,4 +325,4 @@ app.post("/mcp", async (req, res) => {
 
 app.get('/health', (req, res) => res.json({ status: 'ok', active_sessions: sessions.size }));
 
-app.listen(port, () => console.log(`🌙 运行中 - 端口 ${port}`));
+app.listen(port, () => console.log(`🌙 领域已展开 - 端口 ${port}`));
