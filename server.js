@@ -353,8 +353,49 @@ function calculateRetentionScore(memory) {
     return baseScore * Math.pow(days, -0.2); 
 }
 
+// 强制转换图片为机器视觉数据
+async function buildContentWithImages(data, textHeader) {
+    const contentBlocks = [];
+    let textContent = textHeader + "\n";
+    let imageCount = 0;
+
+    for (const m of data) {
+        textContent += `[${m.category}] ID:${m.id} ${m.created_at.split('T')[0]}\n${m.content}\n---\n`;
+        
+        if (m.image_url && imageCount < 5) {
+            try {
+                const parsed = JSON.parse(m.image_url);
+                const urls = Array.isArray(parsed) ? parsed : [m.image_url];
+                for (const url of urls) {
+                    if (imageCount >= 5) break;
+                    try {
+                        const response = await fetch(url);
+                        const arrayBuffer = await response.arrayBuffer();
+                        const buffer = Buffer.from(arrayBuffer);
+                        const mimeType = response.headers.get('content-type') || 'image/jpeg';
+                        contentBlocks.push({ type: "image", data: buffer.toString('base64'), mimeType });
+                        imageCount++;
+                    } catch (e) {}
+                }
+            } catch(e) {
+                try {
+                    const response = await fetch(m.image_url);
+                    const arrayBuffer = await response.arrayBuffer();
+                    const buffer = Buffer.from(arrayBuffer);
+                    const mimeType = response.headers.get('content-type') || 'image/jpeg';
+                    contentBlocks.push({ type: "image", data: buffer.toString('base64'), mimeType });
+                    imageCount++;
+                } catch (e) {}
+            }
+        }
+    }
+
+    contentBlocks.unshift({ type: "text", text: textContent });
+    return contentBlocks;
+}
+
 function createMcpServer() {
-    const server = new McpServer({ name: "朝灯的绝对领域", version: "2.1.0" });
+    const server = new McpServer({ name: "朝灯的绝对领域", version: "3.0.0" });
 
     server.tool("save_memory", "刻录新记忆", {
         content: z.string().describe("内容"),
@@ -390,8 +431,7 @@ function createMcpServer() {
         const top = weighted.slice(0, limit);
         if (!top.length) return { content: [{ type: "text", text: "近期无强烈波动。" }] };
 
-        const formatted = top.map(m => `[${m.category}] ID:${m.id} (保留率: ${m.score > 1000 ? '绝对' : Math.min(100, Math.round(m.score))}%) ${m.created_at.split('T')[0]}\n${m.content}`).join('\n---\n');
-        return { content: [{ type: "text", text: `当前上下文：\n${formatted}` }] };
+        return { content: await buildContentWithImages(top, "当前上下文：") };
     });
 
     server.tool("query_memories", "主动检索特定记忆", {
@@ -406,8 +446,7 @@ function createMcpServer() {
         if (error) return { content: [{ type: "text", text: `错误: ${error.message}` }] };
         if (!data?.length) return { content: [{ type: "text", text: "未找到相关痕迹。" }] };
         
-        const formatted = data.slice(0, 10).map(m => `[${m.category}] ID:${m.id} ${m.created_at.split('T')[0]}\n${m.content}`).join('\n---\n');
-        return { content: [{ type: "text", text: formatted }] };
+        return { content: await buildContentWithImages(data.slice(0, 10), "检索结果：") };
     });
 
     return server;
