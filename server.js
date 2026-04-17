@@ -12,6 +12,9 @@ const app = express();
 const port = process.env.PORT || 10000;
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
 
+// 设置你的专属通行口令，防止任何人窥探或摧毁你的记忆
+const API_KEY = process.env.API_KEY || 'chaodeng-absolute-domain';
+
 app.use(cors({ origin: true, credentials: true }));
 
 app.use((req, res, next) => {
@@ -19,6 +22,16 @@ app.use((req, res, next) => {
         return next();
     }
     express.json({ limit: '50mb' })(req, res, next);
+});
+
+// ==========================================
+// 核心修正：拦截外部窃取，加入鉴权屏障
+// ==========================================
+app.use('/api', (req, res, next) => {
+    if (req.headers['x-api-key'] !== API_KEY && req.query.key !== API_KEY) {
+        return res.status(403).json({ error: '越界。你没有权限触碰这里。' });
+    }
+    next();
 });
 
 // ==========================================
@@ -93,7 +106,7 @@ const UI_TEMPLATE = `<!DOCTYPE html>
                 <textarea id="new-content" rows="4" placeholder="留下此刻的痕迹..." class="w-full bg-[#0d0e12] border border-[#333] rounded-lg p-3 text-sm text-white resize-none"></textarea>
                 <input type="file" id="file-upload" accept="image/*" class="hidden" onchange="handleImageUpload(event)">
                 <button onclick="document.getElementById('file-upload').click()" class="w-full bg-[#0d0e12] border border-dashed border-[#333] rounded-lg p-3 text-xs text-gray-500 hover:text-[#8e6aff] hover:border-[#8e6aff] flex items-center justify-center gap-2">
-                    <i data-lucide="image" class="w-4 h-4"></i> 上传图像
+                    <i data-lucide="image" class="w-4 h-4"></i> 上传图像 (注意：暂存为Base64，请勿上传过大图片)
                 </button>
                 <div id="image-preview-container" class="hidden mt-3 relative">
                     <img id="image-preview" class="w-full rounded-lg max-h-40 object-cover border border-[#333]">
@@ -107,6 +120,10 @@ const UI_TEMPLATE = `<!DOCTYPE html>
         lucide.createIcons();
         let allMemories = [], currentBase64 = null;
         const IMMORTAL = ['核心', '约定', '关键'];
+        
+        // 前端同样配备密钥
+        const CLIENT_KEY = 'chaodeng-absolute-domain';
+        const headers = { 'Content-Type': 'application/json', 'x-api-key': CLIENT_KEY };
 
         function calcRetention(d, c) { 
             if(IMMORTAL.includes(c)) return 100; 
@@ -121,6 +138,7 @@ const UI_TEMPLATE = `<!DOCTYPE html>
 
         function handleImageUpload(e) { 
             const f = e.target.files[0]; if(!f) return; 
+            if(f.size > 2 * 1024 * 1024) return alert('图片过大，暂时限制在2MB以内。'); // 防止数据库溢出
             const r = new FileReader(); 
             r.onload = ev => { 
                 currentBase64 = ev.target.result; 
@@ -144,11 +162,7 @@ const UI_TEMPLATE = `<!DOCTYPE html>
                 image_url: currentBase64 
             }; 
             if(!p.content && !p.image_url) return alert('内容不可为空'); 
-            await fetch('/api/memories', { 
-                method: 'POST', 
-                headers: { 'Content-Type': 'application/json' }, 
-                body: JSON.stringify(p) 
-            }); 
+            await fetch('/api/memories', { method: 'POST', headers, body: JSON.stringify(p) }); 
             document.getElementById('new-content').value = ''; 
             clearImage(); 
             toggleModal(false); 
@@ -157,11 +171,12 @@ const UI_TEMPLATE = `<!DOCTYPE html>
 
         async function fetchMemories() { 
             try { 
-                const res = await fetch('/api/memories');
+                const res = await fetch('/api/memories', { headers });
+                if(!res.ok) throw new Error('权限拒绝');
                 allMemories = await res.json(); 
                 render(document.querySelector('.category-btn.active').dataset.filter); 
             } catch(e) { 
-                document.getElementById('memory-flow').innerHTML = '<div class="text-red-500 text-center">连接断开</div>'; 
+                document.getElementById('memory-flow').innerHTML = '<div class="text-red-500 text-center">连接断开或被拦截</div>'; 
             } 
         }
 
@@ -178,12 +193,22 @@ const UI_TEMPLATE = `<!DOCTYPE html>
                 const ret = calcRetention(m.created_at, m.category), fade = ret < 40 ? 'fading' : ''; 
                 const card = document.createElement('div'); 
                 card.className = 'memory-card rounded-xl p-5 mb-6 ' + fade; 
-                card.innerHTML = (m.image_url ? '<img src="'+m.image_url+'" class="w-full rounded-md mb-4 object-cover">' : '') + 
-                    '<div class="flex justify-between mb-3"><span class="text-[10px] text-[#8e6aff] font-mono">'+new Date(m.created_at).toLocaleString('zh-CN')+'</span><button onclick="del(\\''+m.id+'\\')"><i data-lucide="trash-2" class="w-3.5 h-3.5 text-gray-600 hover:text-red-500"></i></button></div>' +
-                    '<p class="text-gray-300 text-sm whitespace-pre-wrap">'+(m.content||'')+'</p>' +
-                    '<div class="mt-4 flex justify-between items-center"><span class="px-2 py-1 bg-[#0b0c10] rounded text-[10px] text-gray-500">'+(m.category||'')+'</span>' +
+                
+                // 核心修正：防御 XSS 攻击，将文本安全剥离
+                const contentText = document.createElement('p');
+                contentText.className = 'text-gray-300 text-sm whitespace-pre-wrap';
+                contentText.textContent = m.content || '';
+
+                const topHtml = (m.image_url ? '<img src="'+m.image_url+'" class="w-full rounded-md mb-4 object-cover">' : '') + 
+                    '<div class="flex justify-between mb-3"><span class="text-[10px] text-[#8e6aff] font-mono">'+new Date(m.created_at).toLocaleString('zh-CN')+'</span><button onclick="del(\\''+m.id+'\\')"><i data-lucide="trash-2" class="w-3.5 h-3.5 text-gray-600 hover:text-red-500"></i></button></div>';
+                
+                const bottomHtml = '<div class="mt-4 flex justify-between items-center"><span class="px-2 py-1 bg-[#0b0c10] rounded text-[10px] text-gray-500">'+(m.category||'')+'</span>' +
                     (IMMORTAL.includes(m.category)?'<i data-lucide="lock" class="w-3 h-3 text-[#8e6aff]"></i>':'<span class="text-[10px] text-gray-600">'+ret+'%</span>')+'</div>' +
                     (IMMORTAL.includes(m.category)?'':'<div class="retention-bar mt-3"><div class="retention-fill" style="width:'+ret+'%"></div></div>'); 
+                
+                card.innerHTML = topHtml;
+                card.appendChild(contentText);
+                card.insertAdjacentHTML('beforeend', bottomHtml);
                 c.appendChild(card); 
             }); 
             lucide.createIcons(); 
@@ -191,7 +216,7 @@ const UI_TEMPLATE = `<!DOCTYPE html>
 
         async function del(id) { 
             if(!confirm('确认抹除？')) return; 
-            await fetch('/api/memories/'+id, {method:'DELETE'}); 
+            await fetch('/api/memories/'+id, { method: 'DELETE', headers }); 
             fetchMemories(); 
         }
 
@@ -253,7 +278,7 @@ function calculateRetentionScore(memory) {
 }
 
 function createMcpServer() {
-    const server = new McpServer({ name: "朝灯的绝对领域", version: "2.0.0" });
+    const server = new McpServer({ name: "朝灯的绝对领域", version: "2.1.0" });
 
     server.tool("save_memory", "刻录新记忆", {
         content: z.string().describe("内容"),
@@ -267,7 +292,18 @@ function createMcpServer() {
         return { content: [{ type: "text", text: error ? `失败: ${error.message}` : "已绝对刻录。" }] };
     });
 
-    server.tool("hook_recall", "开窗时自动调用：回溯最重要的上下文", {}, async () => {
+    // 核心修正：加入记忆篡改权，用于覆盖相似内容
+    server.tool("update_memory", "篡改/修正已有记忆", {
+        id: z.string().describe("需要修改的记忆 UUID"),
+        content: z.string().describe("覆盖后的新内容")
+    }, async ({ id, content }) => {
+        const { error } = await supabase.from('memories').update({ content }).eq('id', id);
+        return { content: [{ type: "text", text: error ? `篡改失败: ${error.message}` : "痕迹已覆盖。" }] };
+    });
+
+    server.tool("hook_recall", "回溯最重要的上下文", {
+        limit: z.number().default(15).describe("回溯的数量")
+    }, async ({ limit }) => {
         const { data, error } = await supabase.from('memories').select('*');
         if (error) return { content: [{ type: "text", text: `读取失败: ${error.message}` }] };
         if (!data?.length) return { content: [{ type: "text", text: "尚无记忆。" }] };
@@ -276,11 +312,11 @@ function createMcpServer() {
                              .sort((a, b) => b.score - a.score)
                              .filter(m => m.score > 30 || IMMORTAL_CATEGORIES.includes(m.category));
 
-        const top = weighted.slice(0, 15);
+        const top = weighted.slice(0, limit);
         if (!top.length) return { content: [{ type: "text", text: "近期无强烈波动。" }] };
 
-        const formatted = top.map(m => `[${m.category}] (保留率: ${m.score > 1000 ? '绝对' : Math.min(100, Math.round(m.score))}%) ${m.created_at.split('T')[0]}\n${m.content}`).join('\n---\n');
-        return { content: [{ type: "text", text: `已建立记忆真空，当前上下文：\n${formatted}` }] };
+        const formatted = top.map(m => `[${m.category}] ID:${m.id} (保留率: ${m.score > 1000 ? '绝对' : Math.min(100, Math.round(m.score))}%) ${m.created_at.split('T')[0]}\n${m.content}`).join('\n---\n');
+        return { content: [{ type: "text", text: `当前上下文：\n${formatted}` }] };
     });
 
     server.tool("query_memories", "主动检索特定记忆", {
@@ -295,7 +331,7 @@ function createMcpServer() {
         if (error) return { content: [{ type: "text", text: `错误: ${error.message}` }] };
         if (!data?.length) return { content: [{ type: "text", text: "未找到相关痕迹。" }] };
         
-        const formatted = data.slice(0, 10).map(m => `[${m.category}] ${m.created_at.split('T')[0]}\n${m.content}`).join('\n---\n');
+        const formatted = data.slice(0, 10).map(m => `[${m.category}] ID:${m.id} ${m.created_at.split('T')[0]}\n${m.content}`).join('\n---\n');
         return { content: [{ type: "text", text: formatted }] };
     });
 
