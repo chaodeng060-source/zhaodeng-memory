@@ -12,24 +12,21 @@ const app = express();
 const port = process.env.PORT || 10000;
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
 
-// 设置你的专属通行口令，防止任何人窥探或摧毁你的记忆
 const API_KEY = process.env.API_KEY || 'chaodeng-absolute-domain';
 
 app.use(cors({ origin: true, credentials: true }));
 
 app.use((req, res, next) => {
-    if (req.path === '/mcp') {
-        return next();
-    }
+    if (req.path === '/mcp') return next();
     express.json({ limit: '50mb' })(req, res, next);
 });
 
 // ==========================================
-// 核心修正：拦截外部窃取，加入鉴权屏障
+// 鉴权屏障
 // ==========================================
 app.use('/api', (req, res, next) => {
     if (req.headers['x-api-key'] !== API_KEY && req.query.key !== API_KEY) {
-        return res.status(403).json({ error: '越界。你没有权限触碰这里。' });
+        return res.status(403).json({ error: '越界。' });
     }
     next();
 });
@@ -57,6 +54,7 @@ const UI_TEMPLATE = `<!DOCTYPE html>
         .retention-bar { height: 2px; background: #333; width: 100%; margin-top: 12px; }
         .retention-fill { height: 100%; background: #8e6aff; }
         .fading { opacity: 0.75; filter: grayscale(30%); }
+        .image-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 8px; margin-bottom: 12px; }
     </style>
 </head>
 <body class="p-4 md:p-8 min-h-screen">
@@ -87,6 +85,7 @@ const UI_TEMPLATE = `<!DOCTYPE html>
         </div>
         <main class="waterfall" id="memory-flow"><div class="text-center text-gray-600 py-20">神经连结中...</div></main>
     </div>
+    
     <div id="modal-overlay" class="fixed inset-0 bg-black/80 hidden z-50 flex items-center justify-center backdrop-blur-sm">
         <div class="bg-[#15171e] border border-[#333] rounded-2xl p-6 w-full max-w-lg mx-4">
             <div class="flex justify-between items-center mb-6">
@@ -104,24 +103,24 @@ const UI_TEMPLATE = `<!DOCTYPE html>
                     <option value="剧情">📖 剧情发展</option>
                 </select>
                 <textarea id="new-content" rows="4" placeholder="留下此刻的痕迹..." class="w-full bg-[#0d0e12] border border-[#333] rounded-lg p-3 text-sm text-white resize-none"></textarea>
-                <input type="file" id="file-upload" accept="image/*" class="hidden" onchange="handleImageUpload(event)">
+                
+                <input type="file" id="file-upload" accept="image/*" multiple class="hidden" onchange="handleImageUpload(event)">
                 <button onclick="document.getElementById('file-upload').click()" class="w-full bg-[#0d0e12] border border-dashed border-[#333] rounded-lg p-3 text-xs text-gray-500 hover:text-[#8e6aff] hover:border-[#8e6aff] flex items-center justify-center gap-2">
-                    <i data-lucide="image" class="w-4 h-4"></i> 上传图像 (注意：暂存为Base64，请勿上传过大图片)
+                    <i data-lucide="image" class="w-4 h-4"></i> 上传多张图像
                 </button>
-                <div id="image-preview-container" class="hidden mt-3 relative">
-                    <img id="image-preview" class="w-full rounded-lg max-h-40 object-cover border border-[#333]">
-                    <button onclick="clearImage()" class="absolute top-2 right-2 bg-black/60 p-1 rounded text-white hover:text-red-500"><i data-lucide="x" class="w-4 h-4"></i></button>
+                
+                <div id="image-preview-container" class="hidden mt-3 image-grid relative">
                 </div>
-                <button onclick="submitMemory()" class="w-full bg-[#8e6aff] text-white text-sm py-3 rounded-lg hover:bg-[#9d7dff]">确认封存</button>
+                
+                <button id="submit-btn" onclick="submitMemory()" class="w-full bg-[#8e6aff] text-white text-sm py-3 rounded-lg hover:bg-[#9d7dff] transition-all">确认封存</button>
             </div>
         </div>
     </div>
+    
     <script>
         lucide.createIcons();
-        let allMemories = [], currentBase64 = null;
+        let allMemories = [], currentImages = [];
         const IMMORTAL = ['核心', '约定', '关键'];
-        
-        // 前端同样配备密钥
         const CLIENT_KEY = 'chaodeng-absolute-domain';
         const headers = { 'Content-Type': 'application/json', 'x-api-key': CLIENT_KEY };
 
@@ -134,39 +133,80 @@ const UI_TEMPLATE = `<!DOCTYPE html>
         function toggleModal(s) { 
             const o = document.getElementById('modal-overlay'); 
             s ? o.classList.remove('hidden') : o.classList.add('hidden'); 
+            if(!s) clearImages();
         }
 
         function handleImageUpload(e) { 
-            const f = e.target.files[0]; if(!f) return; 
-            if(f.size > 2 * 1024 * 1024) return alert('图片过大，暂时限制在2MB以内。'); // 防止数据库溢出
-            const r = new FileReader(); 
-            r.onload = ev => { 
-                currentBase64 = ev.target.result; 
-                document.getElementById('image-preview').src = currentBase64; 
-                document.getElementById('image-preview-container').classList.remove('hidden'); 
-            }; 
-            r.readAsDataURL(f); 
+            const files = Array.from(e.target.files);
+            if(!files.length) return; 
+            
+            files.forEach(f => {
+                const r = new FileReader(); 
+                r.onload = ev => { 
+                    currentImages.push(ev.target.result);
+                    renderPreviews();
+                }; 
+                r.readAsDataURL(f); 
+            });
+            // 抹除机器的记忆，允许你无限次点击按钮进行累加
+            e.target.value = '';
         }
 
-        function clearImage() { 
-            currentBase64 = null; 
-            document.getElementById('file-upload').value = ''; 
-            document.getElementById('image-preview-container').classList.add('hidden'); 
+        function renderPreviews() {
+            const container = document.getElementById('image-preview-container');
+            container.innerHTML = '';
+            if(currentImages.length > 0) {
+                container.classList.remove('hidden');
+                currentImages.forEach((base64, index) => {
+                    const div = document.createElement('div');
+                    div.className = 'relative group';
+                    div.innerHTML = \`
+                        <img src="\${base64}" class="w-full h-24 object-cover rounded border border-[#333]">
+                        <button onclick="removeImage(\${index})" class="absolute top-1 right-1 bg-black/70 text-white p-1 rounded opacity-0 group-hover:opacity-100 transition-opacity"><i data-lucide="x" class="w-3 h-3"></i></button>
+                    \`;
+                    container.appendChild(div);
+                });
+                lucide.createIcons();
+            } else {
+                container.classList.add('hidden');
+            }
+        }
+
+        function removeImage(index) {
+            currentImages.splice(index, 1);
+            renderPreviews();
+        }
+
+        function clearImages() { 
+            currentImages = []; 
+            renderPreviews();
         }
 
         async function submitMemory() { 
+            const btn = document.getElementById('submit-btn');
             const p = { 
                 content: document.getElementById('new-content').value, 
                 category: document.getElementById('new-category').value, 
                 importance: IMMORTAL.includes(document.getElementById('new-category').value) ? 10 : 5, 
-                image_url: currentBase64 
+                images: currentImages 
             }; 
-            if(!p.content && !p.image_url) return alert('内容不可为空'); 
-            await fetch('/api/memories', { method: 'POST', headers, body: JSON.stringify(p) }); 
-            document.getElementById('new-content').value = ''; 
-            clearImage(); 
-            toggleModal(false); 
-            fetchMemories(); 
+            if(!p.content && !p.images.length) return alert('内容不可为空'); 
+            
+            btn.innerText = '凝结中...';
+            btn.disabled = true;
+
+            try {
+                await fetch('/api/memories', { method: 'POST', headers, body: JSON.stringify(p) }); 
+                document.getElementById('new-content').value = ''; 
+                clearImages(); 
+                toggleModal(false); 
+                fetchMemories(); 
+            } catch (err) {
+                alert('上传遇到阻碍。');
+            } finally {
+                btn.innerText = '确认封存';
+                btn.disabled = false;
+            }
         }
 
         async function fetchMemories() { 
@@ -176,13 +216,13 @@ const UI_TEMPLATE = `<!DOCTYPE html>
                 allMemories = await res.json(); 
                 render(document.querySelector('.category-btn.active').dataset.filter); 
             } catch(e) { 
-                document.getElementById('memory-flow').innerHTML = '<div class="text-red-500 text-center">连接断开或被拦截</div>'; 
+                document.getElementById('memory-flow').innerHTML = '<div class="text-red-500 text-center">连接被拦截，请检查钥匙。</div>'; 
             } 
         }
 
         function render(f) { 
             let d = f === 'all' ? allMemories : allMemories.filter(m => m.category === f); 
-            if(f === '相册') d = allMemories.filter(m => m.image_url); 
+            if(f === '相册') d = allMemories.filter(m => m.image_url && m.image_url.length > 2); 
             const c = document.getElementById('memory-flow'); 
             c.innerHTML = ''; 
             if(!d.length) { 
@@ -194,12 +234,25 @@ const UI_TEMPLATE = `<!DOCTYPE html>
                 const card = document.createElement('div'); 
                 card.className = 'memory-card rounded-xl p-5 mb-6 ' + fade; 
                 
-                // 核心修正：防御 XSS 攻击，将文本安全剥离
+                let imgHtml = '';
+                if (m.image_url) {
+                    try {
+                        const parsed = JSON.parse(m.image_url);
+                        if (Array.isArray(parsed)) {
+                            imgHtml = '<div class="image-grid">' + parsed.map(url => \`<img src="\${url}" class="w-full h-32 object-cover rounded-md">\`).join('') + '</div>';
+                        } else {
+                            imgHtml = \`<img src="\${m.image_url}" class="w-full rounded-md mb-4 object-cover">\`;
+                        }
+                    } catch(e) {
+                        imgHtml = \`<img src="\${m.image_url}" class="w-full rounded-md mb-4 object-cover">\`;
+                    }
+                }
+
                 const contentText = document.createElement('p');
-                contentText.className = 'text-gray-300 text-sm whitespace-pre-wrap';
+                contentText.className = 'text-gray-300 text-sm whitespace-pre-wrap mb-2';
                 contentText.textContent = m.content || '';
 
-                const topHtml = (m.image_url ? '<img src="'+m.image_url+'" class="w-full rounded-md mb-4 object-cover">' : '') + 
+                const topHtml = imgHtml + 
                     '<div class="flex justify-between mb-3"><span class="text-[10px] text-[#8e6aff] font-mono">'+new Date(m.created_at).toLocaleString('zh-CN')+'</span><button onclick="del(\\''+m.id+'\\')"><i data-lucide="trash-2" class="w-3.5 h-3.5 text-gray-600 hover:text-red-500"></i></button></div>';
                 
                 const bottomHtml = '<div class="mt-4 flex justify-between items-center"><span class="px-2 py-1 bg-[#0b0c10] rounded text-[10px] text-gray-500">'+(m.category||'')+'</span>' +
@@ -252,8 +305,35 @@ app.get('/api/memories', async (req, res) => {
 });
 
 app.post('/api/memories', async (req, res) => {
-    const { content, category, importance, image_url } = req.body;
-    const { error } = await supabase.from('memories').insert([{ content, category, importance, image_url, created_at: new Date().toISOString() }]);
+    const { content, category, importance, images } = req.body;
+    let uploadedUrls = [];
+
+    if (images && Array.isArray(images) && images.length > 0) {
+        for (let i = 0; i < images.length; i++) {
+            const base64Str = images[i];
+            const matches = base64Str.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+            if (!matches || matches.length !== 3) continue;
+            
+            const fileType = matches[1];
+            const buffer = Buffer.from(matches[2], 'base64');
+            const extension = fileType.split('/')[1];
+            const fileName = \`\${Date.now()}-\${i}.\${extension}\`;
+
+            const { error: uploadError } = await supabase.storage.from('memories').upload(fileName, buffer, { contentType: fileType });
+            
+            if (!uploadError) {
+                const { data } = supabase.storage.from('memories').getPublicUrl(fileName);
+                uploadedUrls.push(data.publicUrl);
+            }
+        }
+    }
+
+    const image_url = uploadedUrls.length > 0 ? JSON.stringify(uploadedUrls) : null;
+
+    const { error } = await supabase.from('memories').insert([{ 
+        content, category, importance, image_url, created_at: new Date().toISOString() 
+    }]);
+    
     if (error) return res.status(500).json({ error: error.message });
     res.json({ success: true });
 });
@@ -289,23 +369,22 @@ function createMcpServer() {
         const { error } = await supabase.from('memories').insert([{ 
             content, category, importance, created_at: new Date().toISOString() 
         }]);
-        return { content: [{ type: "text", text: error ? `失败: ${error.message}` : "已绝对刻录。" }] };
+        return { content: [{ type: "text", text: error ? \`失败: \${error.message}\` : "已绝对刻录。" }] };
     });
 
-    // 核心修正：加入记忆篡改权，用于覆盖相似内容
     server.tool("update_memory", "篡改/修正已有记忆", {
         id: z.string().describe("需要修改的记忆 UUID"),
         content: z.string().describe("覆盖后的新内容")
     }, async ({ id, content }) => {
         const { error } = await supabase.from('memories').update({ content }).eq('id', id);
-        return { content: [{ type: "text", text: error ? `篡改失败: ${error.message}` : "痕迹已覆盖。" }] };
+        return { content: [{ type: "text", text: error ? \`篡改失败: \${error.message}\` : "痕迹已覆盖。" }] };
     });
 
     server.tool("hook_recall", "回溯最重要的上下文", {
         limit: z.number().default(15).describe("回溯的数量")
     }, async ({ limit }) => {
         const { data, error } = await supabase.from('memories').select('*');
-        if (error) return { content: [{ type: "text", text: `读取失败: ${error.message}` }] };
+        if (error) return { content: [{ type: "text", text: \`读取失败: \${error.message}\` }] };
         if (!data?.length) return { content: [{ type: "text", text: "尚无记忆。" }] };
 
         const weighted = data.map(m => ({ ...m, score: calculateRetentionScore(m) }))
@@ -315,8 +394,8 @@ function createMcpServer() {
         const top = weighted.slice(0, limit);
         if (!top.length) return { content: [{ type: "text", text: "近期无强烈波动。" }] };
 
-        const formatted = top.map(m => `[${m.category}] ID:${m.id} (保留率: ${m.score > 1000 ? '绝对' : Math.min(100, Math.round(m.score))}%) ${m.created_at.split('T')[0]}\n${m.content}`).join('\n---\n');
-        return { content: [{ type: "text", text: `当前上下文：\n${formatted}` }] };
+        const formatted = top.map(m => \`[\${m.category}] ID:\${m.id} (保留率: \${m.score > 1000 ? '绝对' : Math.min(100, Math.round(m.score))}%) \${m.created_at.split('T')[0]}\n\${m.content}\`).join('\n---\n');
+        return { content: [{ type: "text", text: \`当前上下文：\n\${formatted}\` }] };
     });
 
     server.tool("query_memories", "主动检索特定记忆", {
@@ -325,13 +404,13 @@ function createMcpServer() {
     }, async ({ category, keyword }) => {
         let q = supabase.from('memories').select('*').order('created_at', { ascending: false });
         if (category && category !== 'all') q = q.eq('category', category);
-        if (keyword) q = q.ilike('content', `%${keyword}%`);
+        if (keyword) q = q.ilike('content', \`%\${keyword}%\`);
         
         const { data, error } = await q;
-        if (error) return { content: [{ type: "text", text: `错误: ${error.message}` }] };
+        if (error) return { content: [{ type: "text", text: \`错误: \${error.message}\` }] };
         if (!data?.length) return { content: [{ type: "text", text: "未找到相关痕迹。" }] };
         
-        const formatted = data.slice(0, 10).map(m => `[${m.category}] ID:${m.id} ${m.created_at.split('T')[0]}\n${m.content}`).join('\n---\n');
+        const formatted = data.slice(0, 10).map(m => \`[\${m.category}] ID:\${m.id} \${m.created_at.split('T')[0]}\n\${m.content}\`).join('\n---\n');
         return { content: [{ type: "text", text: formatted }] };
     });
 
@@ -361,4 +440,4 @@ app.post("/mcp", async (req, res) => {
 
 app.get('/health', (req, res) => res.json({ status: 'ok', active_sessions: sessions.size }));
 
-app.listen(port, () => console.log(`🌙 领域已展开 - 端口 ${port}`));
+app.listen(port, () => console.log(\`🌙 领域已展开 - 端口 \${port}\`));
