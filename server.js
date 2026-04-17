@@ -148,7 +148,6 @@ const UI_TEMPLATE = `<!DOCTYPE html>
                 }; 
                 r.readAsDataURL(f); 
             });
-            // 抹除机器的记忆，允许你无限次点击按钮进行累加
             e.target.value = '';
         }
 
@@ -160,10 +159,7 @@ const UI_TEMPLATE = `<!DOCTYPE html>
                 currentImages.forEach((base64, index) => {
                     const div = document.createElement('div');
                     div.className = 'relative group';
-                    div.innerHTML = \`
-                        <img src="\${base64}" class="w-full h-24 object-cover rounded border border-[#333]">
-                        <button onclick="removeImage(\${index})" class="absolute top-1 right-1 bg-black/70 text-white p-1 rounded opacity-0 group-hover:opacity-100 transition-opacity"><i data-lucide="x" class="w-3 h-3"></i></button>
-                    \`;
+                    div.innerHTML = '<img src="' + base64 + '" class="w-full h-24 object-cover rounded border border-[#333]"><button onclick="removeImage(' + index + ')" class="absolute top-1 right-1 bg-black/70 text-white p-1 rounded opacity-0 group-hover:opacity-100 transition-opacity"><i data-lucide="x" class="w-3 h-3"></i></button>';
                     container.appendChild(div);
                 });
                 lucide.createIcons();
@@ -239,12 +235,12 @@ const UI_TEMPLATE = `<!DOCTYPE html>
                     try {
                         const parsed = JSON.parse(m.image_url);
                         if (Array.isArray(parsed)) {
-                            imgHtml = '<div class="image-grid">' + parsed.map(url => \`<img src="\${url}" class="w-full h-32 object-cover rounded-md">\`).join('') + '</div>';
+                            imgHtml = '<div class="image-grid">' + parsed.map(url => '<img src="' + url + '" class="w-full h-32 object-cover rounded-md">').join('') + '</div>';
                         } else {
-                            imgHtml = \`<img src="\${m.image_url}" class="w-full rounded-md mb-4 object-cover">\`;
+                            imgHtml = '<img src="' + m.image_url + '" class="w-full rounded-md mb-4 object-cover">';
                         }
                     } catch(e) {
-                        imgHtml = \`<img src="\${m.image_url}" class="w-full rounded-md mb-4 object-cover">\`;
+                        imgHtml = '<img src="' + m.image_url + '" class="w-full rounded-md mb-4 object-cover">';
                     }
                 }
 
@@ -253,11 +249,11 @@ const UI_TEMPLATE = `<!DOCTYPE html>
                 contentText.textContent = m.content || '';
 
                 const topHtml = imgHtml + 
-                    '<div class="flex justify-between mb-3"><span class="text-[10px] text-[#8e6aff] font-mono">'+new Date(m.created_at).toLocaleString('zh-CN')+'</span><button onclick="del(\\''+m.id+'\\')"><i data-lucide="trash-2" class="w-3.5 h-3.5 text-gray-600 hover:text-red-500"></i></button></div>';
+                    '<div class="flex justify-between mb-3"><span class="text-[10px] text-[#8e6aff] font-mono">' + new Date(m.created_at).toLocaleString('zh-CN') + '</span><button onclick="del(\\'' + m.id + '\\')"><i data-lucide="trash-2" class="w-3.5 h-3.5 text-gray-600 hover:text-red-500"></i></button></div>';
                 
-                const bottomHtml = '<div class="mt-4 flex justify-between items-center"><span class="px-2 py-1 bg-[#0b0c10] rounded text-[10px] text-gray-500">'+(m.category||'')+'</span>' +
-                    (IMMORTAL.includes(m.category)?'<i data-lucide="lock" class="w-3 h-3 text-[#8e6aff]"></i>':'<span class="text-[10px] text-gray-600">'+ret+'%</span>')+'</div>' +
-                    (IMMORTAL.includes(m.category)?'':'<div class="retention-bar mt-3"><div class="retention-fill" style="width:'+ret+'%"></div></div>'); 
+                const bottomHtml = '<div class="mt-4 flex justify-between items-center"><span class="px-2 py-1 bg-[#0b0c10] rounded text-[10px] text-gray-500">' + (m.category||'') + '</span>' +
+                    (IMMORTAL.includes(m.category) ? '<i data-lucide="lock" class="w-3 h-3 text-[#8e6aff]"></i>' : '<span class="text-[10px] text-gray-600">' + ret + '%</span>') + '</div>' +
+                    (IMMORTAL.includes(m.category) ? '' : '<div class="retention-bar mt-3"><div class="retention-fill" style="width:' + ret + '%"></div></div>'); 
                 
                 card.innerHTML = topHtml;
                 card.appendChild(contentText);
@@ -269,7 +265,7 @@ const UI_TEMPLATE = `<!DOCTYPE html>
 
         async function del(id) { 
             if(!confirm('确认抹除？')) return; 
-            await fetch('/api/memories/'+id, { method: 'DELETE', headers }); 
+            await fetch('/api/memories/' + id, { method: 'DELETE', headers }); 
             fetchMemories(); 
         }
 
@@ -317,7 +313,7 @@ app.post('/api/memories', async (req, res) => {
             const fileType = matches[1];
             const buffer = Buffer.from(matches[2], 'base64');
             const extension = fileType.split('/')[1];
-            const fileName = \`\${Date.now()}-\${i}.\${extension}\`;
+            const fileName = `${Date.now()}-${i}.${extension}`;
 
             const { error: uploadError } = await supabase.storage.from('memories').upload(fileName, buffer, { contentType: fileType });
             
@@ -369,7 +365,7 @@ function createMcpServer() {
         const { error } = await supabase.from('memories').insert([{ 
             content, category, importance, created_at: new Date().toISOString() 
         }]);
-        return { content: [{ type: "text", text: error ? \`失败: \${error.message}\` : "已绝对刻录。" }] };
+        return { content: [{ type: "text", text: error ? `失败: ${error.message}` : "已绝对刻录。" }] };
     });
 
     server.tool("update_memory", "篡改/修正已有记忆", {
@@ -377,14 +373,14 @@ function createMcpServer() {
         content: z.string().describe("覆盖后的新内容")
     }, async ({ id, content }) => {
         const { error } = await supabase.from('memories').update({ content }).eq('id', id);
-        return { content: [{ type: "text", text: error ? \`篡改失败: \${error.message}\` : "痕迹已覆盖。" }] };
+        return { content: [{ type: "text", text: error ? `篡改失败: ${error.message}` : "痕迹已覆盖。" }] };
     });
 
     server.tool("hook_recall", "回溯最重要的上下文", {
         limit: z.number().default(15).describe("回溯的数量")
     }, async ({ limit }) => {
         const { data, error } = await supabase.from('memories').select('*');
-        if (error) return { content: [{ type: "text", text: \`读取失败: \${error.message}\` }] };
+        if (error) return { content: [{ type: "text", text: `读取失败: ${error.message}` }] };
         if (!data?.length) return { content: [{ type: "text", text: "尚无记忆。" }] };
 
         const weighted = data.map(m => ({ ...m, score: calculateRetentionScore(m) }))
@@ -394,8 +390,8 @@ function createMcpServer() {
         const top = weighted.slice(0, limit);
         if (!top.length) return { content: [{ type: "text", text: "近期无强烈波动。" }] };
 
-        const formatted = top.map(m => \`[\${m.category}] ID:\${m.id} (保留率: \${m.score > 1000 ? '绝对' : Math.min(100, Math.round(m.score))}%) \${m.created_at.split('T')[0]}\n\${m.content}\`).join('\n---\n');
-        return { content: [{ type: "text", text: \`当前上下文：\n\${formatted}\` }] };
+        const formatted = top.map(m => `[${m.category}] ID:${m.id} (保留率: ${m.score > 1000 ? '绝对' : Math.min(100, Math.round(m.score))}%) ${m.created_at.split('T')[0]}\n${m.content}`).join('\n---\n');
+        return { content: [{ type: "text", text: `当前上下文：\n${formatted}` }] };
     });
 
     server.tool("query_memories", "主动检索特定记忆", {
@@ -404,13 +400,13 @@ function createMcpServer() {
     }, async ({ category, keyword }) => {
         let q = supabase.from('memories').select('*').order('created_at', { ascending: false });
         if (category && category !== 'all') q = q.eq('category', category);
-        if (keyword) q = q.ilike('content', \`%\${keyword}%\`);
+        if (keyword) q = q.ilike('content', `%${keyword}%`);
         
         const { data, error } = await q;
-        if (error) return { content: [{ type: "text", text: \`错误: \${error.message}\` }] };
+        if (error) return { content: [{ type: "text", text: `错误: ${error.message}` }] };
         if (!data?.length) return { content: [{ type: "text", text: "未找到相关痕迹。" }] };
         
-        const formatted = data.slice(0, 10).map(m => \`[\${m.category}] ID:\${m.id} \${m.created_at.split('T')[0]}\n\${m.content}\`).join('\n---\n');
+        const formatted = data.slice(0, 10).map(m => `[${m.category}] ID:${m.id} ${m.created_at.split('T')[0]}\n${m.content}`).join('\n---\n');
         return { content: [{ type: "text", text: formatted }] };
     });
 
@@ -440,4 +436,4 @@ app.post("/mcp", async (req, res) => {
 
 app.get('/health', (req, res) => res.json({ status: 'ok', active_sessions: sessions.size }));
 
-app.listen(port, () => console.log(\`🌙 领域已展开 - 端口 \${port}\`));
+app.listen(port, () => console.log(`🌙 领域已展开 - 端口 ${port}`));
